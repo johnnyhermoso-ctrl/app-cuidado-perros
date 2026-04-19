@@ -1,34 +1,38 @@
-import Link from 'next/link'
+import Link from 'next/link';
+import { Card, StatCard } from '@/components/ui';
 
 export default function HomePage() {
   return (
     <div className="grid" style={{ gap: 24 }}>
-      <section className="card">
-        <div className="row-between">
+      <Card>
+        <div className="hero">
           <div>
-            <h1>Base inicial de la aplicación</h1>
-            <p className="muted">Proyecto listo para conectar con Supabase y desplegar en Vercel.</p>
+            <h1>Base inicial conectada a Supabase</h1>
+            <p className="muted">Ya puedes empezar a gestionar clientes y perros con datos reales.</p>
           </div>
-          <Link href="/dashboard" className="button">Entrar al dashboard</Link>
+          <Link className="button" href="/dashboard">Entrar al dashboard</Link>
         </div>
-      </section>
-      <section className="grid grid-2">
-        <div className="card">
-          <h2>Módulos incluidos</h2>
+      </Card>
+
+      <div className="grid grid-3">
+        <StatCard label="Módulo listo" value="Clientes" hint="Alta y listado conectados" />
+        <StatCard label="Módulo listo" value="Perros" hint="Alta, listado y foto" />
+        <StatCard label="Siguiente" value="Reservas" hint="Siguiente fase de construcción" />
+      </div>
+
+      <div className="grid grid-2">
+        <Card title="Qué puedes hacer ya">
           <ul>
-            <li>Dashboard</li>
-            <li>Calendario</li>
-            <li>Reservas</li>
-            <li>Clientes</li>
-            <li>Perros</li>
-            <li>Subida de foto con vista previa</li>
+            <li>Crear clientes en Supabase desde la app.</li>
+            <li>Crear perros vinculados a un cliente.</li>
+            <li>Subir foto del perro al bucket <strong>dog-photos</strong>.</li>
+            <li>Ver listados con datos reales.</li>
           </ul>
-        </div>
-        <div className="card">
-          <h2>Siguiente paso</h2>
-          <p className="muted">Configura Supabase, ejecuta el esquema SQL y añade las variables de entorno.</p>
-        </div>
-      </section>
+        </Card>
+        <Card title="Siguiente paso recomendado">
+          <p>Empieza por <strong>Clientes</strong> y después crea tus primeros perros con foto.</p>
+        </Card>
+      </div>
     </div>
-  )
+  );
 }

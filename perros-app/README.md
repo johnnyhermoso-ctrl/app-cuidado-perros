@@ -1,28 +1,39 @@
 # Perros App
 
-Base inicial para una aplicación de gestión de cuidador de perros con Next.js + Supabase + Vercel.
+Base en Next.js + Supabase para la gestión de un cuidador de perros.
 
-## Requisitos
-- Node.js 20+
-- Cuenta en Supabase
-- Cuenta en Vercel
+## Qué incluye en esta fase
 
-## Arranque local
-1. Copia `.env.example` a `.env.local`
-2. Rellena:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-3. Instala dependencias:
-   ```bash
-   npm install
-   ```
-4. Lanza el proyecto:
-   ```bash
-   npm run dev
-   ```
+- Alta de clientes conectada a Supabase
+- Listado de clientes
+- Alta de perros conectada a Supabase
+- Subida de foto del perro a Supabase Storage
+- Vista previa antes de guardar la foto
+- Listado de perros
+- Navegación base: inicio, dashboard, calendario, reservas, clientes y perros
 
-## Base de datos
-Ejecuta `supabase/schema.sql` dentro de SQL Editor en Supabase.
+## Variables de entorno
 
-## Storage
-Crea un bucket llamado `dog-photos` en Supabase Storage.
+Crea un archivo `.env.local` con:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+```
+
+## Requisitos adicionales
+
+En Supabase Storage crea un bucket público llamado `dog-photos`.
+
+## Desarrollo local
+
+```bash
+npm install
+npm run dev
+```
+
+## Despliegue en Vercel
+
+- Framework preset: Next.js
+- Root directory: `perros-app` si el proyecto está dentro de esa carpeta en el repositorio
+- Variables de entorno: las mismas del `.env.local`
