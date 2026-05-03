@@ -1,6 +1,6 @@
 # Perros App — fase 2
 
-Esta versión incluye:
+Esta versión incluye lo siguiente:
 - clientes conectados a Supabase
 - perros conectados a Supabase
 - subida de foto a Supabase Storage (`dog-photos`)
