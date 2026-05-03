@@ -25,7 +25,28 @@ export type Perro = {
   alergias: string | null;
   medicacion: string | null;
   alimentacion: string | null;
-  caracter: string | null;
+  observaciones: string | null;
+  created_at: string;
+};
+
+export type Servicio = {
+  id: string;
+  codigo: string;
+  nombre: string;
+};
+
+export type Reserva = {
+  id: string;
+  cliente_id: string;
+  servicio_id: string;
+  estado: string;
+  fecha_llegada: string | null;
+  hora_estimada_llegada: string | null;
+  fecha_salida: string | null;
+  hora_estimada_salida: string | null;
+  numero_noches: number | null;
+  subtotal: number | null;
+  total_final: number | null;
   observaciones: string | null;
   created_at: string;
 };

@@ -1,39 +1,29 @@
-# Perros App
+# Perros App — fase 2
 
-Base en Next.js + Supabase para la gestión de un cuidador de perros.
-
-## Qué incluye en esta fase
-
-- Alta de clientes conectada a Supabase
-- Listado de clientes
-- Alta de perros conectada a Supabase
-- Subida de foto del perro a Supabase Storage
-- Vista previa antes de guardar la foto
-- Listado de perros
-- Navegación base: inicio, dashboard, calendario, reservas, clientes y perros
+Esta versión incluye:
+- clientes conectados a Supabase
+- perros conectados a Supabase
+- subida de foto a Supabase Storage (`dog-photos`)
+- reservas reales conectadas a Supabase
+- selección de cliente, perros y servicio
+- listado de reservas
 
 ## Variables de entorno
 
-Crea un archivo `.env.local` con:
+Crea un archivo `.env.local` a partir de `.env.example` con:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 ```
 
-## Requisitos adicionales
-
-En Supabase Storage crea un bucket público llamado `dog-photos`.
-
-## Desarrollo local
+## Arranque local
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Despliegue en Vercel
+## Bucket de fotos
 
-- Framework preset: Next.js
-- Root directory: `perros-app` si el proyecto está dentro de esa carpeta en el repositorio
-- Variables de entorno: las mismas del `.env.local`
+Debes tener creado en Supabase Storage un bucket público llamado `dog-photos`.

@@ -1,15 +1,11 @@
-import { PerrosPageClient } from '@/components/perros-page';
+import { PerrosManager } from '@/components/PerrosManager';
+import { PageHeader } from '@/components/PageHeader';
 
 export default function PerrosPage() {
   return (
-    <div className="grid" style={{ gap: 24 }}>
-      <div className="page-header">
-        <div>
-          <h1>Perros</h1>
-          <p>Alta, listado y foto real del perro con almacenamiento en Supabase.</p>
-        </div>
-      </div>
-      <PerrosPageClient />
+    <div>
+      <PageHeader title="Perros" description="Alta de perros, foto y listado real conectado a Supabase." />
+      <PerrosManager />
     </div>
   );
 }

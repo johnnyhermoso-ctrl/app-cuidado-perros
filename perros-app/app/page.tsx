@@ -1,38 +1,23 @@
 import Link from 'next/link';
-import { Card, StatCard } from '@/components/ui';
+import { PageHeader } from '@/components/PageHeader';
 
 export default function HomePage() {
   return (
-    <div className="grid" style={{ gap: 24 }}>
-      <Card>
-        <div className="hero">
-          <div>
-            <h1>Base inicial conectada a Supabase</h1>
-            <p className="muted">Ya puedes empezar a gestionar clientes y perros con datos reales.</p>
-          </div>
-          <Link className="button" href="/dashboard">Entrar al dashboard</Link>
+    <div>
+      <PageHeader title="Inicio" description="Base de la aplicación de gestión para cuidador de perros." />
+      <section className="hero">
+        <h1>Fase 2: reservas reales conectadas a Supabase</h1>
+        <p>
+          Esta versión ya permite gestionar clientes, perros con foto y reservas reales. El siguiente bloque natural será
+          añadir cálculo económico de alojamiento, check-in/check-out y cobros conectados.
+        </p>
+        <div className="quickLinks">
+          <Link className="quickLink" href="/dashboard">Ir al dashboard</Link>
+          <Link className="quickLink" href="/clientes">Gestionar clientes</Link>
+          <Link className="quickLink" href="/perros">Gestionar perros</Link>
+          <Link className="quickLink" href="/reservas">Crear reservas</Link>
         </div>
-      </Card>
-
-      <div className="grid grid-3">
-        <StatCard label="Módulo listo" value="Clientes" hint="Alta y listado conectados" />
-        <StatCard label="Módulo listo" value="Perros" hint="Alta, listado y foto" />
-        <StatCard label="Siguiente" value="Reservas" hint="Siguiente fase de construcción" />
-      </div>
-
-      <div className="grid grid-2">
-        <Card title="Qué puedes hacer ya">
-          <ul>
-            <li>Crear clientes en Supabase desde la app.</li>
-            <li>Crear perros vinculados a un cliente.</li>
-            <li>Subir foto del perro al bucket <strong>dog-photos</strong>.</li>
-            <li>Ver listados con datos reales.</li>
-          </ul>
-        </Card>
-        <Card title="Siguiente paso recomendado">
-          <p>Empieza por <strong>Clientes</strong> y después crea tus primeros perros con foto.</p>
-        </Card>
-      </div>
+      </section>
     </div>
   );
 }

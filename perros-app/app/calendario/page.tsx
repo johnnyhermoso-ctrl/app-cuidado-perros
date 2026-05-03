@@ -1,20 +1,16 @@
-import { Card, EmptyState } from '@/components/ui';
+import { PageHeader } from '@/components/PageHeader';
 
 export default function CalendarioPage() {
   return (
-    <div className="grid" style={{ gap: 24 }}>
-      <div className="page-header">
-        <div>
-          <h1>Calendario</h1>
-          <p>Vista reservada para el siguiente bloque de desarrollo.</p>
-        </div>
-      </div>
-      <Card>
-        <EmptyState
-          title="Calendario en construcción"
-          text="La siguiente fase conectará reservas, ocupación y vista por día/semana/mes."
-        />
-      </Card>
+    <div>
+      <PageHeader title="Calendario" description="Vista provisional. En la siguiente fase se conectará a las reservas reales." />
+      <section className="card">
+        <h2>Estado actual</h2>
+        <p className="muted">
+          Esta pantalla queda como placeholder visual. La siguiente construcción conectará el calendario con las reservas creadas
+          y mostrará ocupación por día, entradas y salidas.
+        </p>
+      </section>
     </div>
   );
 }

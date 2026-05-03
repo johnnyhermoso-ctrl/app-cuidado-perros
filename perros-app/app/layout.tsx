@@ -1,17 +1,17 @@
 import './globals.css';
+import { AppShell } from '@/components/AppShell';
 import type { Metadata } from 'next';
-import { LayoutShell } from '@/components/layout-shell';
 
 export const metadata: Metadata = {
   title: 'Perros App',
-  description: 'Gestión para cuidador de perros'
+  description: 'Gestión de clientes, perros y reservas',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" suppressHydrationWarning>
-      <body suppressHydrationWarning>
-        <LayoutShell>{children}</LayoutShell>
+    <html lang="es">
+      <body>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
