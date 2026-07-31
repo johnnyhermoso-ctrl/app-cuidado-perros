@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { calculateNights, formatDate } from '@/lib/utils';
+import { calculateBillableUnits, calculateNights, calculateSubtotal, formatCurrency, formatDate } from '@/lib/utils';
 import { Cliente, Perro, Reserva, Servicio } from '@/lib/types';
 import { StatusMessage } from './StatusMessage';
 
@@ -11,6 +11,8 @@ type ReservaJoin = Reserva & {
   servicios?: Servicio;
   reserva_perros?: Array<{ perro_id: string; perros?: Perro }>;
 };
+
+type ApplicableRate = { price: number; origin: 'especial_cliente' | 'general' };
 
 const emptyForm = {
   cliente_id: '',
@@ -33,11 +35,13 @@ export function ReservasManager() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [applicableRate, setApplicableRate] = useState<ApplicableRate | null>(null);
+  const [rateLoading, setRateLoading] = useState(false);
 
   async function loadStaticData() {
     const [{ data: clientesData, error: clientesError }, { data: serviciosData, error: serviciosError }] = await Promise.all([
       supabase.from('clientes').select('*').eq('activo', true).order('nombre'),
-      supabase.from('servicios').select('id,codigo,nombre').eq('activo', true).order('nombre'),
+      supabase.from('servicios').select('*').eq('activo', true).order('nombre'),
     ]);
 
     if (clientesError || serviciosError) {
@@ -85,7 +89,62 @@ export function ReservasManager() {
     loadPerrosByCliente();
   }, [form.cliente_id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadApplicableRate() {
+      if (!form.cliente_id || !form.servicio_id || !form.fecha_llegada) {
+        setApplicableRate(null);
+        return;
+      }
+      setRateLoading(true);
+      const date = form.fecha_llegada;
+      const special = await supabase
+        .from('tarifas_especiales_cliente')
+        .select('precio_especial')
+        .eq('cliente_id', form.cliente_id)
+        .eq('servicio_id', form.servicio_id)
+        .eq('activa', true)
+        .or(`vigencia_desde.is.null,vigencia_desde.lte.${date}`)
+        .or(`vigencia_hasta.is.null,vigencia_hasta.gte.${date}`)
+        .order('vigencia_desde', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!cancelled && special.data) {
+        setApplicableRate({ price: Number(special.data.precio_especial), origin: 'especial_cliente' });
+        setRateLoading(false);
+        return;
+      }
+
+      const general = await supabase
+        .from('tarifas_generales')
+        .select('precio_base')
+        .eq('servicio_id', form.servicio_id)
+        .eq('activa', true)
+        .or(`vigencia_desde.is.null,vigencia_desde.lte.${date}`)
+        .or(`vigencia_hasta.is.null,vigencia_hasta.gte.${date}`)
+        .order('vigencia_desde', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!cancelled) {
+        setApplicableRate(general.data ? { price: Number(general.data.precio_base), origin: 'general' } : null);
+        setRateLoading(false);
+      }
+    }
+    loadApplicableRate();
+    return () => { cancelled = true; };
+  }, [form.cliente_id, form.servicio_id, form.fecha_llegada]);
+
   const nights = useMemo(() => calculateNights(form.fecha_llegada, form.fecha_salida), [form.fecha_llegada, form.fecha_salida]);
+  const selectedService = useMemo(() => servicios.find((item) => item.id === form.servicio_id), [servicios, form.servicio_id]);
+  const billableUnits = useMemo(
+    () => calculateBillableUnits(selectedService?.tipo_unidad_cobro, form.fecha_llegada, form.fecha_salida),
+    [selectedService, form.fecha_llegada, form.fecha_salida]
+  );
+  const provisionalSubtotal = applicableRate ? calculateSubtotal(applicableRate.price, billableUnits, selectedDogIds.length) : 0;
 
   function toggleDog(id: string) {
     setSelectedDogIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
@@ -102,14 +161,21 @@ export function ReservasManager() {
       setMessage({ type: 'error', text: 'La fecha y hora estimada de llegada son obligatorias.' });
       return;
     }
-    if (form.fecha_salida && form.fecha_salida <= form.fecha_llegada) {
-      setMessage({ type: 'error', text: 'La fecha de salida debe ser posterior a la fecha de llegada.' });
+    if (form.fecha_salida && form.fecha_salida < form.fecha_llegada) {
+      setMessage({ type: 'error', text: 'La fecha de salida no puede ser anterior a la fecha de llegada.' });
+      return;
+    }
+    if (selectedService?.tipo_unidad_cobro === 'por_noche' && (!form.fecha_salida || form.fecha_salida <= form.fecha_llegada)) {
+      setMessage({ type: 'error', text: 'El alojamiento requiere una salida posterior a la llegada.' });
+      return;
+    }
+    if (!applicableRate) {
+      setMessage({ type: 'error', text: 'No existe una tarifa activa para el servicio y la fecha seleccionados.' });
       return;
     }
     setSaving(true);
     try {
-      const servicio = servicios.find((item) => item.id === form.servicio_id);
-      const numero_noches = servicio?.codigo === 'alojamiento' ? nights : 0;
+      const numero_noches = selectedService?.tipo_unidad_cobro === 'por_noche' ? nights : 0;
       const { error: reservaError } = await supabase.rpc('crear_reserva', {
         p_cliente_id: form.cliente_id,
         p_servicio_id: form.servicio_id,
@@ -189,7 +255,7 @@ export function ReservasManager() {
           </label>
           <label>
             Fecha salida
-            <input type="date" value={form.fecha_salida} onChange={(e) => setForm({ ...form, fecha_salida: e.target.value })} />
+            <input type="date" required={selectedService?.tipo_unidad_cobro === 'por_noche'} value={form.fecha_salida} onChange={(e) => setForm({ ...form, fecha_salida: e.target.value })} />
           </label>
           <label>
             Hora estimada salida
@@ -200,8 +266,10 @@ export function ReservasManager() {
             <textarea rows={4} value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} />
           </label>
           <div className="full summaryBox">
-            <strong>Resumen automático</strong>
-            <p>Noches calculadas: {nights}</p>
+            <strong>Resumen económico provisional</strong>
+            <p>Tarifa: {rateLoading ? 'Buscando…' : applicableRate ? `${formatCurrency(applicableRate.price)} (${applicableRate.origin === 'especial_cliente' ? 'especial del cliente' : 'general'})` : 'No disponible'}</p>
+            <p>Unidades: {billableUnits} · Perros: {selectedDogIds.length}</p>
+            <p>Subtotal: <strong>{formatCurrency(provisionalSubtotal)}</strong></p>
             <p>Sugerencia larga estancia: {nights >= 15 ? 'Sí' : 'No'}</p>
             <p>Sugerencia segundo perro: {selectedDogIds.length > 1 ? 'Sí' : 'No'}</p>
           </div>
@@ -228,10 +296,12 @@ export function ReservasManager() {
                 <small>
                   Perros: {reserva.reserva_perros?.map((item) => item.perros?.nombre).filter(Boolean).join(', ') || '—'}
                 </small>
+                <p>{reserva.tarifa_aplicada != null ? `${formatCurrency(reserva.tarifa_aplicada)} × ${reserva.numero_noches || 1} unidad(es)` : 'Sin tarifa registrada'}</p>
               </div>
               <div className="listItemMeta">
                 <span className="pill">{reserva.estado}</span>
                 <small>{reserva.numero_noches || 0} noches</small>
+                <strong>{formatCurrency(reserva.total_final)}</strong>
               </div>
             </article>
           ))}

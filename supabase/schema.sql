@@ -253,6 +253,12 @@ alter table tarifas_generales drop constraint if exists tarifas_generales_vigenc
 alter table tarifas_generales add constraint tarifas_generales_vigencia_check check (
   vigencia_hasta is null or vigencia_desde is null or vigencia_hasta >= vigencia_desde
 );
+alter table tarifas_especiales_cliente drop constraint if exists tarifas_especiales_precio_check;
+alter table tarifas_especiales_cliente add constraint tarifas_especiales_precio_check check (precio_especial >= 0);
+alter table tarifas_especiales_cliente drop constraint if exists tarifas_especiales_vigencia_check;
+alter table tarifas_especiales_cliente add constraint tarifas_especiales_vigencia_check check (
+  vigencia_hasta is null or vigencia_desde is null or vigencia_hasta >= vigencia_desde
+);
 
 -- Acceso interno: solo usuarios autenticados pueden operar con los datos.
 alter table clientes enable row level security;
@@ -330,6 +336,11 @@ as $$
 declare
   new_reserva_id uuid;
   valid_dogs integer;
+  service_unit text;
+  applied_rate numeric(10,2);
+  rate_origin text;
+  billable_units integer;
+  calculated_subtotal numeric(10,2);
 begin
   if (select auth.uid()) is null then
     raise exception 'Es necesario iniciar sesión.';
@@ -340,17 +351,22 @@ begin
   if p_fecha_llegada is null or p_hora_estimada_llegada is null then
     raise exception 'La fecha y la hora de llegada son obligatorias.';
   end if;
-  if p_fecha_salida is not null and p_fecha_salida <= p_fecha_llegada then
-    raise exception 'La fecha de salida debe ser posterior a la fecha de llegada.';
-  end if;
   if coalesce(cardinality(p_perro_ids), 0) = 0 then
     raise exception 'La reserva debe incluir al menos un perro.';
   end if;
   if not exists (select 1 from public.clientes where id = p_cliente_id and activo) then
     raise exception 'El cliente no existe o está desactivado.';
   end if;
-  if not exists (select 1 from public.servicios where id = p_servicio_id and activo) then
+  select tipo_unidad_cobro into service_unit
+  from public.servicios where id = p_servicio_id and activo;
+  if not found then
     raise exception 'El servicio no existe o está desactivado.';
+  end if;
+  if p_fecha_salida is not null and p_fecha_salida < p_fecha_llegada then
+    raise exception 'La fecha de salida no puede ser anterior a la fecha de llegada.';
+  end if;
+  if service_unit = 'por_noche' and (p_fecha_salida is null or p_fecha_salida <= p_fecha_llegada) then
+    raise exception 'El alojamiento requiere una salida posterior a la llegada.';
   end if;
 
   select count(*) into valid_dogs
@@ -360,14 +376,52 @@ begin
     raise exception 'Todos los perros deben estar activos y pertenecer al cliente.';
   end if;
 
+  select precio_especial into applied_rate
+  from public.tarifas_especiales_cliente
+  where cliente_id = p_cliente_id
+    and servicio_id = p_servicio_id
+    and activa
+    and (vigencia_desde is null or vigencia_desde <= p_fecha_llegada)
+    and (vigencia_hasta is null or vigencia_hasta >= p_fecha_llegada)
+  order by vigencia_desde desc nulls last, created_at desc
+  limit 1;
+
+  if found then
+    rate_origin := 'especial_cliente';
+  else
+    select precio_base into applied_rate
+    from public.tarifas_generales
+    where servicio_id = p_servicio_id
+      and activa
+      and (vigencia_desde is null or vigencia_desde <= p_fecha_llegada)
+      and (vigencia_hasta is null or vigencia_hasta >= p_fecha_llegada)
+    order by vigencia_desde desc nulls last, created_at desc
+    limit 1;
+    rate_origin := 'general';
+  end if;
+
+  if applied_rate is null then
+    raise exception 'No existe una tarifa activa para el servicio y la fecha seleccionados.';
+  end if;
+
+  billable_units := case
+    when service_unit = 'por_noche' then p_fecha_salida - p_fecha_llegada
+    when service_unit = 'por_dia' then coalesce(p_fecha_salida, p_fecha_llegada) - p_fecha_llegada + 1
+    else 1
+  end;
+  calculated_subtotal := round(applied_rate * billable_units * cardinality(p_perro_ids), 2);
+
   insert into public.reservas (
     cliente_id, servicio_id, estado, fecha_llegada, hora_estimada_llegada,
     fecha_salida, hora_estimada_salida, observaciones, numero_noches,
+    origen_tarifa, tarifa_aplicada, subtotal, total_final,
     sugerir_descuento_larga_estancia, sugerir_descuento_segundo_perro
   ) values (
     p_cliente_id, p_servicio_id, p_estado, p_fecha_llegada, p_hora_estimada_llegada,
     p_fecha_salida, p_hora_estimada_salida, nullif(trim(p_observaciones), ''),
-    greatest(p_numero_noches, 0), p_numero_noches >= 15, cardinality(p_perro_ids) > 1
+    case when service_unit = 'por_noche' then billable_units else 0 end,
+    rate_origin, applied_rate, calculated_subtotal, calculated_subtotal,
+    service_unit = 'por_noche' and billable_units >= 15, cardinality(p_perro_ids) > 1
   ) returning id into new_reserva_id;
 
   insert into public.reserva_perros (reserva_id, perro_id, orden_en_reserva)

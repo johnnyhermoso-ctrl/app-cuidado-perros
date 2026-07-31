@@ -13,9 +13,12 @@ La aplicación incluye:
 - creación atómica y listado de reservas;
 - catálogo configurable de servicios;
 - tarifas generales con vigencia, edición y desactivación;
+- selección de tarifa vigente y cálculo provisional al crear reservas;
 - esquema inicial para tarifas, pagos, festivos y recurrencias.
 
-Las tarifas especiales por cliente, el cálculo económico de reservas, el calendario, los cobros, la capacidad, el check-in/check-out y las recurrencias todavía no están implementados en la interfaz.
+Las tarifas especiales por cliente todavía no tienen pantalla propia, aunque el cálculo ya les da prioridad si existen en la base de datos. Los ajustes, cobros, calendario, capacidad, check-in/check-out y recurrencias todavía no están implementados en la interfaz.
+
+El subtotal inicial de una reserva se calcula como `tarifa × unidades × número de perros`. La reserva conserva una copia de la tarifa y su origen para que futuras modificaciones no alteren el histórico.
 
 ## Requisitos
 

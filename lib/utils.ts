@@ -24,3 +24,14 @@ export function isValidDateRange(startDate?: string | null, endDate?: string | n
   if (!startDate || !endDate) return true;
   return endDate >= startDate;
 }
+
+export function calculateBillableUnits(unitType?: string | null, startDate?: string, endDate?: string) {
+  if (unitType === 'por_noche') return calculateNights(startDate, endDate);
+  if (unitType === 'por_dia') return endDate ? calculateNights(startDate, endDate) + 1 : 1;
+  return 1;
+}
+
+export function calculateSubtotal(rate: number, units: number, numberOfDogs: number) {
+  if (rate < 0 || units < 0 || numberOfDogs < 0) return 0;
+  return Math.round(rate * units * numberOfDogs * 100) / 100;
+}

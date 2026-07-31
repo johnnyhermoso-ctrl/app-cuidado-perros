@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateNights, formatCurrency, formatDate, isValidDateRange } from './utils';
+import { calculateBillableUnits, calculateNights, calculateSubtotal, formatCurrency, formatDate, isValidDateRange } from './utils';
 
 describe('calculateNights', () => {
   it('calcula noches sin verse afectado por el cambio horario', () => {
@@ -27,5 +27,16 @@ describe('tarifas', () => {
 
   it('formatea importes en euros', () => {
     expect(formatCurrency(25)).toContain('25,00');
+  });
+
+  it('calcula unidades según el servicio', () => {
+    expect(calculateBillableUnits('por_noche', '2026-08-01', '2026-08-04')).toBe(3);
+    expect(calculateBillableUnits('por_dia', '2026-08-01', '2026-08-01')).toBe(1);
+    expect(calculateBillableUnits('por_dia', '2026-08-01', '2026-08-03')).toBe(3);
+    expect(calculateBillableUnits('por_servicio', '2026-08-01')).toBe(1);
+  });
+
+  it('calcula subtotal por unidades y perros', () => {
+    expect(calculateSubtotal(20, 3, 2)).toBe(120);
   });
 });

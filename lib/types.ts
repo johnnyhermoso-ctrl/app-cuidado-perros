@@ -62,6 +62,8 @@ export type Reserva = {
   fecha_salida: string | null;
   hora_estimada_salida: string | null;
   numero_noches: number | null;
+  origen_tarifa: string | null;
+  tarifa_aplicada: number | null;
   subtotal: number | null;
   total_final: number | null;
   observaciones: string | null;
