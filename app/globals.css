@@ -73,6 +73,10 @@ textarea { resize: vertical; }
 .tableLike { display: grid; gap: 12px; }
 .headerActions { display: flex; gap: 12px; }
 .banner { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; padding: 12px 14px; border-radius: 14px; }
+.itemActions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.textButton { border: 0; padding: 0; background: transparent; color: var(--primary); cursor: pointer; font-weight: 700; }
+.textButton:hover { text-decoration: underline; }
+.inactiveItem { opacity: 0.62; background: #f8fafc; }
 .signOutButton { margin-top: 24px; width: 100%; background: transparent; color: #cbd5e1; border: 1px solid #334155; }
 .signOutButton:hover { background: rgba(255,255,255,0.08); color: white; }
 .authPage { min-height: 100vh; display: grid; place-items: center; padding: 20px; }

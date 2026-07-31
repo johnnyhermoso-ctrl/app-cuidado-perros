@@ -34,6 +34,22 @@ export type Servicio = {
   id: string;
   codigo: string;
   nombre: string;
+  descripcion: string | null;
+  tipo_unidad_cobro: string | null;
+  activo: boolean;
+};
+
+export type TarifaGeneral = {
+  id: string;
+  servicio_id: string;
+  nombre_tarifa: string | null;
+  precio_base: number;
+  moneda: string;
+  activa: boolean;
+  vigencia_desde: string | null;
+  vigencia_hasta: string | null;
+  observaciones: string | null;
+  created_at: string;
 };
 
 export type Reserva = {

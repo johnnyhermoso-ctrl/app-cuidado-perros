@@ -15,3 +15,12 @@ export function calculateNights(startDate?: string, endDate?: string) {
   if (diff <= 0) return 0;
   return Math.round(diff / (1000 * 60 * 60 * 24));
 }
+
+export function formatCurrency(value?: number | null, currency = 'EUR') {
+  return new Intl.NumberFormat('es-ES', { style: 'currency', currency }).format(value ?? 0);
+}
+
+export function isValidDateRange(startDate?: string | null, endDate?: string | null) {
+  if (!startDate || !endDate) return true;
+  return endDate >= startDate;
+}

@@ -11,6 +11,8 @@ const links = [
   { href: '/clientes', label: 'Clientes' },
   { href: '/perros', label: 'Perros' },
   { href: '/reservas', label: 'Reservas' },
+  { href: '/servicios', label: 'Servicios' },
+  { href: '/tarifas', label: 'Tarifas' },
   { href: '/calendario', label: 'Calendario' },
 ];
 

@@ -11,9 +11,11 @@ La aplicación incluye:
 - alta y listado de perros;
 - fotografías privadas en Supabase Storage;
 - creación atómica y listado de reservas;
+- catálogo configurable de servicios;
+- tarifas generales con vigencia, edición y desactivación;
 - esquema inicial para tarifas, pagos, festivos y recurrencias.
 
-El calendario, los cobros, la capacidad, el check-in/check-out y las recurrencias todavía no están implementados en la interfaz.
+Las tarifas especiales por cliente, el cálculo económico de reservas, el calendario, los cobros, la capacidad, el check-in/check-out y las recurrencias todavía no están implementados en la interfaz.
 
 ## Requisitos
 

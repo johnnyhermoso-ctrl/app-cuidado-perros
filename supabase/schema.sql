@@ -243,6 +243,16 @@ alter table reservas drop constraint if exists reservas_fechas_check;
 alter table reservas add constraint reservas_fechas_check check (fecha_salida is null or fecha_llegada is null or fecha_salida > fecha_llegada);
 alter table pagos drop constraint if exists pagos_importe_positivo_check;
 alter table pagos add constraint pagos_importe_positivo_check check (importe > 0);
+alter table servicios drop constraint if exists servicios_unidad_cobro_check;
+alter table servicios add constraint servicios_unidad_cobro_check check (
+  tipo_unidad_cobro in ('por_noche', 'por_dia', 'por_servicio', 'por_trayecto')
+);
+alter table tarifas_generales drop constraint if exists tarifas_generales_precio_check;
+alter table tarifas_generales add constraint tarifas_generales_precio_check check (precio_base >= 0);
+alter table tarifas_generales drop constraint if exists tarifas_generales_vigencia_check;
+alter table tarifas_generales add constraint tarifas_generales_vigencia_check check (
+  vigencia_hasta is null or vigencia_desde is null or vigencia_hasta >= vigencia_desde
+);
 
 -- Acceso interno: solo usuarios autenticados pueden operar con los datos.
 alter table clientes enable row level security;
