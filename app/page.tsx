@@ -4,12 +4,11 @@ import { PageHeader } from '@/components/PageHeader';
 export default function HomePage() {
   return (
     <div>
-      <PageHeader title="Inicio" description="Base de la aplicación de gestión para cuidador de perros." />
+      <PageHeader title="Inicio" description="Gestión diaria del servicio de cuidado canino." />
       <section className="hero">
-        <h1>Fase 2: reservas reales conectadas a Supabase</h1>
+        <h1>Todo el negocio en un mismo lugar</h1>
         <p>
-          Esta versión ya permite gestionar clientes, perros con foto y reservas reales. El siguiente bloque natural será
-          añadir cálculo económico de alojamiento, check-in/check-out y cobros conectados.
+          Consulta la actividad, registra clientes y perros, y organiza las próximas reservas desde un panel sencillo.
         </p>
         <div className="quickLinks">
           <Link className="quickLink" href="/dashboard">Ir al dashboard</Link>
