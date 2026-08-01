@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateBillableUnits, calculateNights, calculateSubtotal, formatCurrency, formatDate, isValidDateRange } from './utils';
+import { calculateBalance, calculateBillableUnits, calculateNights, calculateSubtotal, formatCurrency, formatDate, isValidDateRange } from './utils';
 
 describe('calculateNights', () => {
   it('calcula noches sin verse afectado por el cambio horario', () => {
@@ -38,5 +38,10 @@ describe('tarifas', () => {
 
   it('calcula subtotal por unidades y perros', () => {
     expect(calculateSubtotal(20, 3, 2)).toBe(120);
+  });
+
+  it('calcula saldo con pagos parciales y saldo a favor', () => {
+    expect(calculateBalance(100, [20, 30])).toBe(50);
+    expect(calculateBalance(40, [50])).toBe(-10);
   });
 });

@@ -35,3 +35,7 @@ export function calculateSubtotal(rate: number, units: number, numberOfDogs: num
   if (rate < 0 || units < 0 || numberOfDogs < 0) return 0;
   return Math.round(rate * units * numberOfDogs * 100) / 100;
 }
+
+export function calculateBalance(total: number, payments: number[]) {
+  return Math.round((total - payments.reduce((sum, payment) => sum + payment, 0)) * 100) / 100;
+}

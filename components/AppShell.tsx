@@ -13,6 +13,7 @@ const links = [
   { href: '/reservas', label: 'Reservas' },
   { href: '/servicios', label: 'Servicios' },
   { href: '/tarifas', label: 'Tarifas' },
+  { href: '/cobros', label: 'Cobros' },
   { href: '/calendario', label: 'Calendario' },
 ];
 

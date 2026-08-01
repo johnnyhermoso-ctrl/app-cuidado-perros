@@ -433,3 +433,164 @@ $$;
 
 revoke all on function crear_reserva(uuid, uuid, uuid[], text, date, time, date, time, text, integer) from public;
 grant execute on function crear_reserva(uuid, uuid, uuid[], text, date, time, date, time, text, integer) to authenticated;
+
+-- Trazabilidad económica. Los movimientos se anulan, nunca se eliminan desde la aplicación.
+alter table ajustes_reserva add column if not exists estado text not null default 'activo';
+alter table ajustes_reserva add column if not exists anulado_at timestamptz;
+alter table ajustes_reserva add column if not exists anulado_por uuid references auth.users(id) on delete set null;
+alter table pagos add column if not exists anulado_at timestamptz;
+alter table pagos add column if not exists anulado_por uuid references auth.users(id) on delete set null;
+
+alter table ajustes_reserva drop constraint if exists ajustes_tipo_check;
+alter table ajustes_reserva add constraint ajustes_tipo_check check (tipo in ('descuento', 'recargo'));
+alter table ajustes_reserva drop constraint if exists ajustes_importe_check;
+alter table ajustes_reserva add constraint ajustes_importe_check check (importe > 0);
+alter table ajustes_reserva drop constraint if exists ajustes_estado_check;
+alter table ajustes_reserva add constraint ajustes_estado_check check (estado in ('activo', 'anulado'));
+alter table pagos drop constraint if exists pagos_estado_check;
+alter table pagos add constraint pagos_estado_check check (estado in ('confirmado', 'anulado'));
+
+create or replace function recalcular_total_reserva(target_reserva_id uuid)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare
+  discounts numeric(10,2);
+  surcharges numeric(10,2);
+begin
+  select
+    coalesce(sum(importe) filter (where tipo = 'descuento' and estado = 'activo'), 0),
+    coalesce(sum(importe) filter (where tipo = 'recargo' and estado = 'activo'), 0)
+  into discounts, surcharges
+  from public.ajustes_reserva
+  where reserva_id = target_reserva_id;
+
+  update public.reservas
+  set total_descuentos = discounts,
+      total_recargos = surcharges,
+      total_final = greatest(subtotal + surcharges - discounts, 0),
+      updated_at = now()
+  where id = target_reserva_id;
+end;
+$$;
+
+create or replace function trigger_recalcular_total_reserva()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'DELETE' then
+    perform public.recalcular_total_reserva(old.reserva_id);
+    return old;
+  end if;
+  perform public.recalcular_total_reserva(new.reserva_id);
+  return new;
+end;
+$$;
+
+drop trigger if exists ajustes_recalcular_total on ajustes_reserva;
+create trigger ajustes_recalcular_total
+after insert or update or delete on ajustes_reserva
+for each row execute function trigger_recalcular_total_reserva();
+
+create or replace function registrar_ajuste(
+  p_reserva_id uuid,
+  p_tipo text,
+  p_concepto text,
+  p_importe numeric,
+  p_descripcion text default null
+)
+returns uuid
+language plpgsql
+set search_path = ''
+as $$
+declare
+  new_id uuid;
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  if p_tipo not in ('descuento', 'recargo') then raise exception 'Tipo de ajuste no permitido.'; end if;
+  if p_importe is null or p_importe <= 0 then raise exception 'El importe debe ser mayor que cero.'; end if;
+  if nullif(trim(p_concepto), '') is null then raise exception 'El concepto es obligatorio.'; end if;
+  if not exists (select 1 from public.reservas where id = p_reserva_id) then raise exception 'La reserva no existe.'; end if;
+
+  insert into public.ajustes_reserva (reserva_id, tipo, concepto, importe, descripcion)
+  values (p_reserva_id, p_tipo, trim(p_concepto), round(p_importe, 2), nullif(trim(p_descripcion), ''))
+  returning id into new_id;
+  return new_id;
+end;
+$$;
+
+create or replace function anular_ajuste(p_ajuste_id uuid)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  update public.ajustes_reserva
+  set estado = 'anulado', anulado_at = now(), anulado_por = (select auth.uid())
+  where id = p_ajuste_id and estado = 'activo';
+  if not found then raise exception 'El ajuste no existe o ya está anulado.'; end if;
+end;
+$$;
+
+create or replace function registrar_pago(
+  p_reserva_id uuid,
+  p_importe numeric,
+  p_metodo_pago text,
+  p_referencia text default null,
+  p_observaciones text default null
+)
+returns uuid
+language plpgsql
+set search_path = ''
+as $$
+declare
+  new_id uuid;
+  outstanding numeric(10,2);
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  if p_importe is null or p_importe <= 0 then raise exception 'El importe debe ser mayor que cero.'; end if;
+  if p_metodo_pago not in ('efectivo', 'bizum', 'transferencia', 'tarjeta', 'otro') then raise exception 'Método de pago no permitido.'; end if;
+  if not exists (select 1 from public.reservas where id = p_reserva_id) then raise exception 'La reserva no existe.'; end if;
+
+  select r.total_final - coalesce(sum(p.importe) filter (where p.estado = 'confirmado'), 0)
+  into outstanding
+  from public.reservas r
+  left join public.pagos p on p.reserva_id = r.id
+  where r.id = p_reserva_id
+  group by r.id, r.total_final;
+  if outstanding <= 0 then raise exception 'La reserva no tiene saldo pendiente.'; end if;
+  if p_importe > outstanding then raise exception 'El pago supera el saldo pendiente.'; end if;
+
+  insert into public.pagos (reserva_id, importe, metodo_pago, referencia, observaciones)
+  values (p_reserva_id, round(p_importe, 2), p_metodo_pago, nullif(trim(p_referencia), ''), nullif(trim(p_observaciones), ''))
+  returning id into new_id;
+  return new_id;
+end;
+$$;
+
+create or replace function anular_pago(p_pago_id uuid)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  update public.pagos
+  set estado = 'anulado', anulado_at = now(), anulado_por = (select auth.uid())
+  where id = p_pago_id and estado = 'confirmado';
+  if not found then raise exception 'El pago no existe o ya está anulado.'; end if;
+end;
+$$;
+
+revoke all on function registrar_ajuste(uuid, text, text, numeric, text) from public;
+revoke all on function anular_ajuste(uuid) from public;
+revoke all on function registrar_pago(uuid, numeric, text, text, text) from public;
+revoke all on function anular_pago(uuid) from public;
+grant execute on function registrar_ajuste(uuid, text, text, numeric, text) to authenticated;
+grant execute on function anular_ajuste(uuid) to authenticated;
+grant execute on function registrar_pago(uuid, numeric, text, text, text) to authenticated;
+grant execute on function anular_pago(uuid) to authenticated;
