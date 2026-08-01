@@ -85,6 +85,25 @@ textarea { resize: vertical; }
 .authCard { width: min(100%, 420px); }
 .authCard h1 { margin-bottom: 8px; }
 .authBrand { color: var(--text); margin-bottom: 18px; }
+.calendarCard { overflow: hidden; }
+.calendarToolbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 18px; }
+.calendarToolbar h2, .calendarToolbar p { margin: 0; }
+.calendarToolbar p { margin-top: 5px; }
+.calendarActions { display: flex; gap: 8px; }
+.calendarViewport { overflow-x: auto; }
+.calendarGrid { display: grid; grid-template-columns: repeat(7, minmax(125px, 1fr)); min-width: 875px; }
+.calendarWeekHeader { color: var(--muted); font-size: 0.8rem; font-weight: 700; text-align: center; border: 1px solid var(--border); border-bottom: 0; border-radius: 12px 12px 0 0; overflow: hidden; }
+.calendarWeekHeader > div { padding: 9px; background: #f8fafc; }
+.calendarDays { border-left: 1px solid var(--border); border-top: 1px solid var(--border); }
+.calendarDay { min-height: 150px; padding: 9px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: white; }
+.calendarDayOutside { background: #f8fafc; color: #98a2b3; }
+.calendarDayHeader { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+.calendarOccupancy { color: var(--primary-dark); font-size: 0.7rem; font-weight: 700; }
+.calendarMovement { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0; font-size: 0.68rem; color: var(--success-text); }
+.calendarBookings { display: grid; gap: 5px; }
+.calendarBooking { display: grid; gap: 2px; padding: 6px; border-radius: 8px; background: #eff4ff; color: #2046b3; font-size: 0.7rem; }
+.calendarBooking strong, .calendarBooking span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calendarBooking span { color: #475467; }
 
 @media (max-width: 980px) {
   .shell { grid-template-columns: 1fr; }
@@ -94,4 +113,5 @@ textarea { resize: vertical; }
   .grid.twoCols, .grid.stats { grid-template-columns: 1fr; }
   .formGrid { grid-template-columns: 1fr; }
   .pageHeader { flex-direction: column; }
+  .calendarToolbar { align-items: flex-start; flex-direction: column; }
 }
