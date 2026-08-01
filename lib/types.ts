@@ -61,6 +61,8 @@ export type Reserva = {
   hora_estimada_llegada: string | null;
   fecha_salida: string | null;
   hora_estimada_salida: string | null;
+  checkin_real_at: string | null;
+  checkout_real_at: string | null;
   numero_noches: number | null;
   origen_tarifa: string | null;
   tarifa_aplicada: number | null;
