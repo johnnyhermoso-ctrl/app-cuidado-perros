@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { calculateBillableUnits, calculateNights, calculateSubtotal, formatCurrency, formatDate } from '@/lib/utils';
 import { Cliente, Perro, Reserva, Servicio } from '@/lib/types';
+import { getReservationActions, getReservationTimestampUpdate, ReservationStatus } from '@/lib/reservation-state';
 import { StatusMessage } from './StatusMessage';
 
 type ReservaJoin = Reserva & {
@@ -37,6 +38,7 @@ export function ReservasManager() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [applicableRate, setApplicableRate] = useState<ApplicableRate | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   async function loadStaticData() {
     const [{ data: clientesData, error: clientesError }, { data: serviciosData, error: serviciosError }] = await Promise.all([
@@ -202,6 +204,24 @@ export function ReservasManager() {
     }
   }
 
+  async function updateReservationStatus(reservation: ReservaJoin, nextStatus: ReservationStatus) {
+    if (nextStatus === 'cancelada' && !window.confirm('¿Confirmas la cancelación? La reserva seguirá visible en el histórico.')) return;
+    setUpdatingId(reservation.id);
+    setMessage(null);
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('reservas')
+      .update({ estado: nextStatus, ...getReservationTimestampUpdate(nextStatus, now) })
+      .eq('id', reservation.id);
+
+    if (error) setMessage({ type: 'error', text: error.message });
+    else {
+      setMessage({ type: 'success', text: `Reserva actualizada a ${nextStatus.replace('_', ' ')}.` });
+      await loadReservas();
+    }
+    setUpdatingId(null);
+  }
+
   return (
     <div className="grid twoCols">
       <section className="card">
@@ -302,6 +322,19 @@ export function ReservasManager() {
                 <span className="pill">{reserva.estado}</span>
                 <small>{reserva.numero_noches || 0} noches</small>
                 <strong>{formatCurrency(reserva.total_final)}</strong>
+                <div className="reservationActions">
+                  {getReservationActions(reserva.estado).map((action) => (
+                    <button
+                      type="button"
+                      key={action.nextStatus}
+                      className={`textButton ${action.kind === 'danger' ? 'dangerTextButton' : ''}`}
+                      disabled={updatingId === reserva.id}
+                      onClick={() => updateReservationStatus(reserva, action.nextStatus)}
+                    >
+                      {updatingId === reserva.id ? 'Actualizando...' : action.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </article>
           ))}
