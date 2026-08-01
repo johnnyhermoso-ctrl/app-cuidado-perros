@@ -1,7 +1,7 @@
 {
   "name": "perros-app",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packageManager": "yarn@1.22.22",
   "scripts": {
     "dev": "next dev",
