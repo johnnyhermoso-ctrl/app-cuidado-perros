@@ -67,7 +67,10 @@ export type Reserva = {
   origen_tarifa: string | null;
   tarifa_aplicada: number | null;
   subtotal: number | null;
+  total_descuentos: number | null;
+  total_recargos: number | null;
   total_final: number | null;
+  numero_festivos_detectados: number | null;
   observaciones: string | null;
   created_at: string;
 };

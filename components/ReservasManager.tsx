@@ -12,6 +12,7 @@ type ReservaJoin = Reserva & {
   clientes?: Cliente;
   servicios?: Servicio;
   reserva_perros?: Array<{ perro_id: string; perros?: Perro }>;
+  ajustes_reserva?: Array<{ tipo: 'descuento' | 'recargo'; concepto: string; importe: number; estado: string; modo: string | null }>;
 };
 
 type ApplicableRate = { price: number; origin: 'especial_cliente' | 'general' };
@@ -66,7 +67,7 @@ export function ReservasManager() {
     setLoading(true);
     const { data, error } = await supabase
       .from('reservas')
-      .select('*, clientes(*), servicios(*), reserva_perros(perro_id, perros(*))')
+      .select('*, clientes(*), servicios(*), reserva_perros(perro_id, perros(*)), ajustes_reserva(tipo,concepto,importe,estado,modo)')
       .order('created_at', { ascending: false });
     if (error) {
       setMessage({ type: 'error', text: error.message });
@@ -340,7 +341,20 @@ export function ReservasManager() {
                 <small>
                   Perros: {reserva.reserva_perros?.map((item) => item.perros?.nombre).filter(Boolean).join(', ') || '—'}
                 </small>
-                <p>{reserva.tarifa_aplicada != null ? `${formatCurrency(reserva.tarifa_aplicada)} × ${reserva.numero_noches || 1} unidad(es)` : 'Sin tarifa registrada'}</p>
+                <div className="reservationBreakdown">
+                  <strong>Desglose</strong>
+                  <div><span>{reserva.numero_noches || 1} noche(s) × {formatCurrency(reserva.tarifa_aplicada)}</span><span>{formatCurrency(reserva.subtotal)}</span></div>
+                  {(reserva.ajustes_reserva || []).filter((ajuste) => ajuste.estado === 'activo').map((ajuste, index) => (
+                    <div key={`${ajuste.modo || ajuste.tipo}-${index}`}>
+                      <span>{ajuste.concepto}</span>
+                      <span>{ajuste.tipo === 'descuento' ? '−' : '+'}{formatCurrency(ajuste.importe)}</span>
+                    </div>
+                  ))}
+                  {(reserva.numero_festivos_detectados || 0) === 0 && (reserva.total_recargos || 0) === 0 ? (
+                    <div><span>Recargo festivo (0 noches)</span><span>{formatCurrency(0)}</span></div>
+                  ) : null}
+                  <div className="reservationTotal"><span>Total</span><strong>{formatCurrency(reserva.total_final)}</strong></div>
+                </div>
               </div>
               <div className="listItemMeta">
                 <span className="pill">{reserva.estado}</span>
