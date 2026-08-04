@@ -347,7 +347,7 @@ export function ReservasManager() {
                 <small>{reserva.numero_noches || 0} noches</small>
                 <strong>{formatCurrency(reserva.total_final)}</strong>
                 <div className="reservationActions">
-                  {['pendiente', 'confirmada'].includes(reserva.estado) ? <button type="button" className="textButton" onClick={() => editReservation(reserva)}>Editar reserva</button> : null}
+                  {['borrador', 'pendiente', 'confirmada', 'en_curso'].includes(reserva.estado) ? <button type="button" className="textButton" onClick={() => editReservation(reserva)}>Editar reserva</button> : null}
                   {getReservationActions(reserva.estado).map((action) => (
                     <button
                       type="button"

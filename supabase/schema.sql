@@ -688,7 +688,7 @@ begin
   if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
   select estado into current_status from public.reservas where id = p_reserva_id;
   if not found then raise exception 'La reserva no existe.'; end if;
-  if current_status not in ('pendiente', 'confirmada') then raise exception 'Solo se pueden editar reservas pendientes o confirmadas.'; end if;
+  if current_status not in ('borrador', 'pendiente', 'confirmada', 'en_curso') then raise exception 'Solo se pueden editar reservas operativas no finalizadas ni canceladas.'; end if;
   if p_fecha_llegada is null or p_hora_estimada_llegada is null then raise exception 'La fecha y hora de llegada son obligatorias.'; end if;
   if coalesce(cardinality(p_perro_ids), 0) = 0 then raise exception 'La reserva debe incluir al menos un perro.'; end if;
   if not exists (select 1 from public.clientes where id = p_cliente_id and activo) then raise exception 'El cliente no existe o está desactivado.'; end if;
