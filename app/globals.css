@@ -79,6 +79,10 @@ textarea { resize: vertical; }
 .textButton:disabled { cursor: wait; opacity: 0.55; }
 .dangerTextButton { color: var(--error-text); }
 .reservationActions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin-top: 4px; }
+.reservationBreakdown { display: grid; gap: 6px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #f8fafc; font-size: 0.86rem; }
+.reservationBreakdown > div { display: flex; justify-content: space-between; gap: 18px; }
+.reservationBreakdown span:last-child { white-space: nowrap; }
+.reservationTotal { padding-top: 7px; border-top: 1px solid var(--border); }
 .inactiveItem { opacity: 0.62; background: #f8fafc; }
 .sectionSpacing { margin-top: 20px; }
 .smallMetric { font-size: 1.45rem; }
