@@ -6,6 +6,7 @@ import { calculateBillableUnits, calculateNights, calculateSubtotal, formatCurre
 import { Cliente, Perro, Reserva, Servicio } from '@/lib/types';
 import { getReservationActions, getReservationTimestampUpdate, ReservationStatus } from '@/lib/reservation-state';
 import { StatusMessage } from './StatusMessage';
+import { holidaySurcharge, type Holiday } from '@/lib/holidays';
 
 type ReservaJoin = Reserva & {
   clientes?: Cliente;
@@ -39,11 +40,16 @@ export function ReservasManager() {
   const [applicableRate, setApplicableRate] = useState<ApplicableRate | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [holidayAmount, setHolidayAmount] = useState(2);
 
   async function loadStaticData() {
-    const [{ data: clientesData, error: clientesError }, { data: serviciosData, error: serviciosError }] = await Promise.all([
+    const [{ data: clientesData, error: clientesError }, { data: serviciosData, error: serviciosError }, holidayData, holidayConfig] = await Promise.all([
       supabase.from('clientes').select('*').eq('activo', true).order('nombre'),
       supabase.from('servicios').select('*').eq('activo', true).order('nombre'),
+      supabase.from('festivos').select('fecha,activo').eq('activo', true),
+      supabase.from('configuracion').select('valor').eq('clave', 'recargo_festivo_alojamiento').maybeSingle(),
     ]);
 
     if (clientesError || serviciosError) {
@@ -51,6 +57,8 @@ export function ReservasManager() {
     } else {
       setClientes((clientesData || []) as Cliente[]);
       setServicios((serviciosData || []) as Servicio[]);
+      setHolidays((holidayData.data ?? []) as Holiday[]);
+      setHolidayAmount(Number(holidayConfig.data?.valor ?? 2));
     }
   }
 
@@ -77,7 +85,10 @@ export function ReservasManager() {
     async function loadPerrosByCliente() {
       if (!form.cliente_id) {
         setPerrosCliente([]);
-        setSelectedDogIds([]);
+        if (editingId) {
+          const current = reservas.find((item) => item.id === editingId);
+          setSelectedDogIds(current?.reserva_perros?.map((item) => item.perro_id) ?? []);
+        } else setSelectedDogIds([]);
         return;
       }
       const { data, error } = await supabase.from('perros').select('*').eq('cliente_id', form.cliente_id).eq('activo', true).order('nombre');
@@ -89,7 +100,7 @@ export function ReservasManager() {
       }
     }
     loadPerrosByCliente();
-  }, [form.cliente_id]);
+  }, [form.cliente_id, editingId, reservas]);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +158,7 @@ export function ReservasManager() {
     [selectedService, form.fecha_llegada, form.fecha_salida]
   );
   const provisionalSubtotal = applicableRate ? calculateSubtotal(applicableRate.price, billableUnits, selectedDogIds.length) : 0;
+  const holidayPreview = useMemo(() => selectedService?.tipo_unidad_cobro === 'por_noche' ? holidaySurcharge(form.fecha_llegada, form.fecha_salida, holidays, holidayAmount) : { dates: [], count: 0, total: 0 }, [selectedService, form.fecha_llegada, form.fecha_salida, holidays, holidayAmount]);
 
   function toggleDog(id: string) {
     setSelectedDogIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
@@ -178,30 +190,39 @@ export function ReservasManager() {
     setSaving(true);
     try {
       const numero_noches = selectedService?.tipo_unidad_cobro === 'por_noche' ? nights : 0;
-      const { error: reservaError } = await supabase.rpc('crear_reserva', {
-        p_cliente_id: form.cliente_id,
-        p_servicio_id: form.servicio_id,
-        p_perro_ids: selectedDogIds,
-        p_estado: form.estado,
-        p_fecha_llegada: form.fecha_llegada,
-        p_hora_estimada_llegada: form.hora_estimada_llegada,
-        p_fecha_salida: form.fecha_salida || null,
-        p_hora_estimada_salida: form.hora_estimada_salida || null,
-        p_observaciones: form.observaciones.trim() || null,
-        p_numero_noches: numero_noches,
-      });
+      const rpc = editingId ? 'actualizar_reserva' : 'crear_reserva';
+      const parameters = editingId ? {
+        p_reserva_id: editingId, p_cliente_id: form.cliente_id, p_servicio_id: form.servicio_id, p_perro_ids: selectedDogIds,
+        p_fecha_llegada: form.fecha_llegada, p_hora_estimada_llegada: form.hora_estimada_llegada,
+        p_fecha_salida: form.fecha_salida || null, p_hora_estimada_salida: form.hora_estimada_salida || null, p_observaciones: form.observaciones.trim() || null,
+      } : {
+        p_cliente_id: form.cliente_id, p_servicio_id: form.servicio_id, p_perro_ids: selectedDogIds, p_estado: form.estado,
+        p_fecha_llegada: form.fecha_llegada, p_hora_estimada_llegada: form.hora_estimada_llegada,
+        p_fecha_salida: form.fecha_salida || null, p_hora_estimada_salida: form.hora_estimada_salida || null,
+        p_observaciones: form.observaciones.trim() || null, p_numero_noches: numero_noches,
+      };
+      const { error: reservaError } = await supabase.rpc(rpc, parameters);
       if (reservaError) throw reservaError;
 
       setForm(emptyForm);
+      setEditingId(null);
       setSelectedDogIds([]);
       setPerrosCliente([]);
-      setMessage({ type: 'success', text: 'Reserva creada correctamente.' });
+      setMessage({ type: 'success', text: editingId ? 'Reserva actualizada y recalculada correctamente.' : 'Reserva creada correctamente.' });
       await loadReservas();
     } catch (error: any) {
       setMessage({ type: 'error', text: error.message || 'Error guardando reserva.' });
     } finally {
       setSaving(false);
     }
+  }
+
+  function editReservation(reservation: ReservaJoin) {
+    setEditingId(reservation.id);
+    setForm({ cliente_id: reservation.cliente_id, servicio_id: reservation.servicio_id, estado: reservation.estado, fecha_llegada: reservation.fecha_llegada || '', hora_estimada_llegada: reservation.hora_estimada_llegada?.slice(0, 5) || '', fecha_salida: reservation.fecha_salida || '', hora_estimada_salida: reservation.hora_estimada_salida?.slice(0, 5) || '', observaciones: reservation.observaciones || '' });
+    setSelectedDogIds(reservation.reserva_perros?.map((item) => item.perro_id) ?? []);
+    setMessage(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async function updateReservationStatus(reservation: ReservaJoin, nextStatus: ReservationStatus) {
@@ -225,7 +246,7 @@ export function ReservasManager() {
   return (
     <div className="grid twoCols">
       <section className="card">
-        <h2>Nueva reserva</h2>
+        <h2>{editingId ? 'Editar reserva' : 'Nueva reserva'}</h2>
         <form onSubmit={handleSubmit} className="formGrid">
           <label>
             Cliente *
@@ -290,11 +311,14 @@ export function ReservasManager() {
             <p>Tarifa: {rateLoading ? 'Buscando…' : applicableRate ? `${formatCurrency(applicableRate.price)} (${applicableRate.origin === 'especial_cliente' ? 'especial del cliente' : 'general'})` : 'No disponible'}</p>
             <p>Unidades: {billableUnits} · Perros: {selectedDogIds.length}</p>
             <p>Subtotal: <strong>{formatCurrency(provisionalSubtotal)}</strong></p>
+            <p>Festivos: {holidayPreview.count} noche(s) · <strong>{formatCurrency(holidayPreview.total)}</strong></p>
+            <p>Total previsto: <strong>{formatCurrency(provisionalSubtotal + holidayPreview.total)}</strong></p>
             <p>Sugerencia larga estancia: {nights >= 15 ? 'Sí' : 'No'}</p>
             <p>Sugerencia segundo perro: {selectedDogIds.length > 1 ? 'Sí' : 'No'}</p>
           </div>
           <div className="full actionsRow">
-            <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : 'Guardar reserva'}</button>
+            <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : editingId ? 'Guardar y recalcular' : 'Guardar reserva'}</button>
+            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); setSelectedDogIds([]); }}>Cancelar edición</button> : null}
           </div>
           {message ? <div className="full"><StatusMessage type={message.type} message={message.text} /></div> : null}
         </form>
@@ -323,6 +347,7 @@ export function ReservasManager() {
                 <small>{reserva.numero_noches || 0} noches</small>
                 <strong>{formatCurrency(reserva.total_final)}</strong>
                 <div className="reservationActions">
+                  {['pendiente', 'confirmada'].includes(reserva.estado) ? <button type="button" className="textButton" onClick={() => editReservation(reserva)}>Editar reserva</button> : null}
                   {getReservationActions(reserva.estado).map((action) => (
                     <button
                       type="button"

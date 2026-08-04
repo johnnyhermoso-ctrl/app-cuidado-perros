@@ -20,6 +20,7 @@ export function ClientesManager() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   async function loadClientes() {
@@ -57,28 +58,50 @@ export function ClientesManager() {
       return;
     }
     setSaving(true);
-    const { error } = await supabase.from('clientes').insert({
+    const payload = {
       nombre: form.nombre.trim(),
       apellidos: form.apellidos.trim() || null,
       telefono: form.telefono.trim() || null,
       email: form.email.trim() || null,
       direccion: form.direccion.trim() || null,
       notas: form.notas.trim() || null,
-    });
+    };
+    const { error } = editingId
+      ? await supabase.from('clientes').update(payload).eq('id', editingId)
+      : await supabase.from('clientes').insert(payload);
     if (error) {
       setMessage({ type: 'error', text: error.message });
     } else {
       setForm(emptyForm);
-      setMessage({ type: 'success', text: 'Cliente creado correctamente.' });
+      setEditingId(null);
+      setMessage({ type: 'success', text: editingId ? 'Cliente actualizado correctamente.' : 'Cliente creado correctamente.' });
       await loadClientes();
     }
     setSaving(false);
   }
 
+  function editCliente(cliente: Cliente) {
+    setEditingId(cliente.id);
+    setForm({ nombre: cliente.nombre, apellidos: cliente.apellidos || '', telefono: cliente.telefono || '', email: cliente.email || '', direccion: cliente.direccion || '', notas: cliente.notas || '' });
+    setMessage(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function deactivateCliente(cliente: Cliente) {
+    if (!window.confirm(`¿Desactivar a ${cliente.nombre}? Sus reservas conservarán el histórico.`)) return;
+    const { error } = await supabase.from('clientes').update({ activo: false }).eq('id', cliente.id);
+    if (error) setMessage({ type: 'error', text: error.message });
+    else {
+      if (editingId === cliente.id) { setEditingId(null); setForm(emptyForm); }
+      setMessage({ type: 'success', text: 'Cliente desactivado.' });
+      await loadClientes();
+    }
+  }
+
   return (
     <div className="grid twoCols">
       <section className="card">
-        <h2>Nuevo cliente</h2>
+        <h2>{editingId ? 'Editar cliente' : 'Nuevo cliente'}</h2>
         <form onSubmit={handleSubmit} className="formGrid">
           <label>
             Nombre *
@@ -105,7 +128,8 @@ export function ClientesManager() {
             <textarea value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })} rows={4} />
           </label>
           <div className="full actionsRow">
-            <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : 'Guardar cliente'}</button>
+            <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Guardar cliente'}</button>
+            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); }}>Cancelar edición</button> : null}
           </div>
           {message ? <div className="full"><StatusMessage type={message.type} message={message.text} /></div> : null}
         </form>
@@ -120,12 +144,12 @@ export function ClientesManager() {
         {!loading && filtered.length === 0 ? <p>No hay clientes todavía.</p> : null}
         <div className="listStack">
           {filtered.map((cliente) => (
-            <article key={cliente.id} className="listItem">
+            <article key={cliente.id} className="listItem clickableItem" onClick={() => editCliente(cliente)}>
               <div>
                 <strong>{cliente.nombre} {cliente.apellidos ?? ''}</strong>
                 <p>{cliente.telefono || 'Sin teléfono'} · {cliente.email || 'Sin email'}</p>
               </div>
-              <small>{cliente.direccion || 'Sin dirección'}</small>
+              <div className="itemActions"><small>{cliente.direccion || 'Sin dirección'}</small><div className="detailActions"><button type="button" className="textButton" onClick={(event) => { event.stopPropagation(); editCliente(cliente); }}>Editar</button><button type="button" className="textButton dangerTextButton" onClick={(event) => { event.stopPropagation(); deactivateCliente(cliente); }}>Desactivar</button></div></div>
             </article>
           ))}
         </div>

@@ -221,8 +221,26 @@ values
   ('permitir_sobreocupacion', 'true', 'Permitir o no sobreocupación manual'),
   ('margen_cortesia_horas', '2', 'Margen de cortesía para check-out en alojamiento'),
   ('sugerir_descuento_larga_estancia_desde_noches', '15', 'Sugerencia de larga estancia'),
-  ('ciudad_festivos', 'Madrid', 'Ciudad de referencia para festivos')
+  ('ciudad_festivos', 'Madrid', 'Ciudad de referencia para festivos'),
+  ('recargo_festivo_alojamiento', '2.00', 'Recargo por noche festiva y reserva')
 on conflict (clave) do nothing;
+
+insert into festivos (fecha, nombre, ambito, municipio, comunidad_autonoma, activo) values
+  ('2026-01-01', 'Año Nuevo', 'nacional', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-01-06', 'Epifanía del Señor', 'nacional', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-04-02', 'Jueves Santo', 'autonómico', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-04-03', 'Viernes Santo', 'nacional', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-05-01', 'Fiesta del Trabajo', 'nacional', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-05-02', 'Fiesta de la Comunidad de Madrid', 'autonómico', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-05-15', 'San Isidro Labrador', 'local', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-08-15', 'Asunción de la Virgen', 'nacional', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-10-12', 'Fiesta Nacional de España', 'nacional', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-11-02', 'Traslado de Todos los Santos', 'autonómico', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-11-09', 'Nuestra Señora de La Almudena', 'local', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-12-07', 'Traslado del Día de la Constitución', 'autonómico', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-12-08', 'Inmaculada Concepción', 'nacional', 'Madrid', 'Comunidad de Madrid', true),
+  ('2026-12-25', 'Natividad del Señor', 'nacional', 'Madrid', 'Comunidad de Madrid', true)
+on conflict (fecha) do update set nombre = excluded.nombre, ambito = excluded.ambito, municipio = excluded.municipio, comunidad_autonoma = excluded.comunidad_autonoma;
 
 -- También actualiza de forma segura proyectos creados con una versión anterior.
 alter table clientes add column if not exists activo boolean not null default true;
@@ -427,6 +445,7 @@ begin
   insert into public.reserva_perros (reserva_id, perro_id, orden_en_reserva)
   select new_reserva_id, dog_id, dog_order::integer
   from unnest(p_perro_ids) with ordinality as dogs(dog_id, dog_order);
+  perform public.aplicar_recargo_festivos(new_reserva_id);
   return new_reserva_id;
 end;
 $$;
@@ -594,3 +613,128 @@ grant execute on function registrar_ajuste(uuid, text, text, numeric, text) to a
 grant execute on function anular_ajuste(uuid) to authenticated;
 grant execute on function registrar_pago(uuid, numeric, text, text, text) to authenticated;
 grant execute on function anular_pago(uuid) to authenticated;
+
+-- Recalcula el recargo automático de noches festivas para una reserva.
+create or replace function aplicar_recargo_festivos(target_reserva_id uuid)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare
+  holiday_count integer := 0;
+  surcharge_per_night numeric(10,2) := 0;
+  service_unit text;
+  arrival_date date;
+  departure_date date;
+begin
+  select s.tipo_unidad_cobro, r.fecha_llegada, r.fecha_salida
+  into service_unit, arrival_date, departure_date
+  from public.reservas r join public.servicios s on s.id = r.servicio_id
+  where r.id = target_reserva_id;
+
+  if not found then raise exception 'La reserva no existe.'; end if;
+
+  update public.ajustes_reserva
+  set estado = 'anulado', anulado_at = now(), anulado_por = (select auth.uid())
+  where reserva_id = target_reserva_id and modo = 'festivo_automatico' and estado = 'activo';
+
+  if service_unit = 'por_noche' and arrival_date is not null and departure_date is not null then
+    select count(*) into holiday_count from public.festivos
+    where activo and fecha >= arrival_date and fecha < departure_date;
+    select coalesce(valor::numeric, 2) into surcharge_per_night
+    from public.configuracion where clave = 'recargo_festivo_alojamiento';
+  end if;
+
+  update public.reservas set numero_festivos_detectados = holiday_count where id = target_reserva_id;
+
+  if holiday_count > 0 and surcharge_per_night > 0 then
+    insert into public.ajustes_reserva (reserva_id, tipo, concepto, modo, importe, cantidad, descripcion)
+    values (target_reserva_id, 'recargo', 'Noches festivas de Madrid', 'festivo_automatico', round(holiday_count * surcharge_per_night, 2), holiday_count, concat(holiday_count, ' noche(s) × ', surcharge_per_night, ' €'));
+  end if;
+
+  perform public.recalcular_total_reserva(target_reserva_id);
+end;
+$$;
+
+revoke all on function aplicar_recargo_festivos(uuid) from public;
+grant execute on function aplicar_recargo_festivos(uuid) to authenticated;
+
+-- Edita una reserva abierta y recalcula tarifa, perros y recargos de forma atómica.
+create or replace function actualizar_reserva(
+  p_reserva_id uuid,
+  p_cliente_id uuid,
+  p_servicio_id uuid,
+  p_perro_ids uuid[],
+  p_fecha_llegada date,
+  p_hora_estimada_llegada time,
+  p_fecha_salida date default null,
+  p_hora_estimada_salida time default null,
+  p_observaciones text default null
+)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare
+  current_status text;
+  service_unit text;
+  applied_rate numeric(10,2);
+  rate_origin text;
+  billable_units integer;
+  valid_dogs integer;
+  paid_total numeric(10,2);
+  new_total numeric(10,2);
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  select estado into current_status from public.reservas where id = p_reserva_id;
+  if not found then raise exception 'La reserva no existe.'; end if;
+  if current_status not in ('pendiente', 'confirmada') then raise exception 'Solo se pueden editar reservas pendientes o confirmadas.'; end if;
+  if p_fecha_llegada is null or p_hora_estimada_llegada is null then raise exception 'La fecha y hora de llegada son obligatorias.'; end if;
+  if coalesce(cardinality(p_perro_ids), 0) = 0 then raise exception 'La reserva debe incluir al menos un perro.'; end if;
+  if not exists (select 1 from public.clientes where id = p_cliente_id and activo) then raise exception 'El cliente no existe o está desactivado.'; end if;
+
+  select tipo_unidad_cobro into service_unit from public.servicios where id = p_servicio_id and activo;
+  if not found then raise exception 'El servicio no existe o está desactivado.'; end if;
+  if p_fecha_salida is not null and p_fecha_salida < p_fecha_llegada then raise exception 'La salida no puede ser anterior a la llegada.'; end if;
+  if service_unit = 'por_noche' and (p_fecha_salida is null or p_fecha_salida <= p_fecha_llegada) then raise exception 'El alojamiento requiere una salida posterior a la llegada.'; end if;
+
+  select count(*) into valid_dogs from public.perros where id = any(p_perro_ids) and cliente_id = p_cliente_id and activo;
+  if valid_dogs <> cardinality(p_perro_ids) then raise exception 'Todos los perros deben pertenecer al cliente y estar activos.'; end if;
+
+  select precio_especial into applied_rate from public.tarifas_especiales_cliente
+  where cliente_id = p_cliente_id and servicio_id = p_servicio_id and activa
+    and (vigencia_desde is null or vigencia_desde <= p_fecha_llegada)
+    and (vigencia_hasta is null or vigencia_hasta >= p_fecha_llegada)
+  order by vigencia_desde desc nulls last, created_at desc limit 1;
+  if found then rate_origin := 'especial_cliente'; else
+    select precio_base into applied_rate from public.tarifas_generales
+    where servicio_id = p_servicio_id and activa
+      and (vigencia_desde is null or vigencia_desde <= p_fecha_llegada)
+      and (vigencia_hasta is null or vigencia_hasta >= p_fecha_llegada)
+    order by vigencia_desde desc nulls last, created_at desc limit 1;
+    rate_origin := 'general';
+  end if;
+  if applied_rate is null then raise exception 'No existe una tarifa activa para el servicio y fecha seleccionados.'; end if;
+
+  billable_units := case when service_unit = 'por_noche' then p_fecha_salida - p_fecha_llegada when service_unit = 'por_dia' then coalesce(p_fecha_salida, p_fecha_llegada) - p_fecha_llegada + 1 else 1 end;
+  update public.reservas set cliente_id = p_cliente_id, servicio_id = p_servicio_id, fecha_llegada = p_fecha_llegada,
+    hora_estimada_llegada = p_hora_estimada_llegada, fecha_salida = p_fecha_salida, hora_estimada_salida = p_hora_estimada_salida,
+    observaciones = nullif(trim(p_observaciones), ''), numero_noches = case when service_unit = 'por_noche' then billable_units else 0 end,
+    origen_tarifa = rate_origin, tarifa_aplicada = applied_rate, subtotal = round(applied_rate * billable_units * cardinality(p_perro_ids), 2),
+    sugerir_descuento_larga_estancia = service_unit = 'por_noche' and billable_units >= 15,
+    sugerir_descuento_segundo_perro = cardinality(p_perro_ids) > 1, updated_at = now()
+  where id = p_reserva_id;
+
+  delete from public.reserva_perros where reserva_id = p_reserva_id;
+  insert into public.reserva_perros (reserva_id, perro_id, orden_en_reserva)
+  select p_reserva_id, dog_id, dog_order::integer from unnest(p_perro_ids) with ordinality as dogs(dog_id, dog_order);
+  perform public.aplicar_recargo_festivos(p_reserva_id);
+
+  select coalesce(sum(importe) filter (where estado = 'confirmado'), 0) into paid_total from public.pagos where reserva_id = p_reserva_id;
+  select total_final into new_total from public.reservas where id = p_reserva_id;
+  if paid_total > new_total then raise exception 'La modificación dejaría pagos por encima del nuevo total. Anula o ajusta primero los pagos.'; end if;
+end;
+$$;
+
+revoke all on function actualizar_reserva(uuid, uuid, uuid, uuid[], date, time, date, time, text) from public;
+grant execute on function actualizar_reserva(uuid, uuid, uuid, uuid[], date, time, date, time, text) to authenticated;

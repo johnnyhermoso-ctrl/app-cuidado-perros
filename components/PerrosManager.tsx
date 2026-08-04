@@ -27,6 +27,7 @@ export function PerrosManager() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -114,13 +115,13 @@ export function PerrosManager() {
     setSaving(true);
     let uploadedPath: string | null = null;
     try {
-      let foto_url: string | null = null;
+      let foto_url: string | null = editingId ? perros.find((item) => item.id === editingId)?.foto_url ?? null : null;
       if (photoFile) {
         foto_url = await uploadPhoto(photoFile);
         uploadedPath = foto_url;
       }
 
-      const { error } = await supabase.from('perros').insert({
+      const payload = {
         cliente_id: form.cliente_id,
         nombre: form.nombre.trim(),
         raza: form.raza.trim() || null,
@@ -134,12 +135,16 @@ export function PerrosManager() {
         alimentacion: form.alimentacion.trim() || null,
         observaciones: form.observaciones.trim() || null,
         foto_url,
-      });
+      };
+      const { error } = editingId
+        ? await supabase.from('perros').update(payload).eq('id', editingId)
+        : await supabase.from('perros').insert(payload);
       if (error) throw error;
       setForm(emptyForm);
+      setEditingId(null);
       setPhotoFile(null);
       setPhotoPreview(null);
-      setMessage({ type: 'success', text: 'Perro creado correctamente.' });
+      setMessage({ type: 'success', text: editingId ? 'Perro actualizado correctamente.' : 'Perro creado correctamente.' });
       await loadData();
     } catch (error: any) {
       if (uploadedPath) await supabase.storage.from('dog-photos').remove([uploadedPath]);
@@ -149,10 +154,26 @@ export function PerrosManager() {
     }
   }
 
+  function editPerro(perro: Perro & { foto_firmada?: string | null }) {
+    setEditingId(perro.id);
+    setForm({ cliente_id: perro.cliente_id, nombre: perro.nombre, raza: perro.raza || '', fecha_nacimiento: perro.fecha_nacimiento || '', sexo: perro.sexo || '', peso_kg: perro.peso_kg?.toString() || '', tamano: perro.tamano || '', numero_chip: perro.numero_chip || '', alergias: perro.alergias || '', medicacion: perro.medicacion || '', alimentacion: perro.alimentacion || '', observaciones: perro.observaciones || '' });
+    setPhotoFile(null);
+    setPhotoPreview(perro.foto_firmada || null);
+    setMessage(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function deactivatePerro(perro: Perro) {
+    if (!window.confirm(`¿Desactivar a ${perro.nombre}? Se conservará en el histórico de reservas.`)) return;
+    const { error } = await supabase.from('perros').update({ activo: false }).eq('id', perro.id);
+    if (error) setMessage({ type: 'error', text: error.message });
+    else { if (editingId === perro.id) { setEditingId(null); setForm(emptyForm); setPhotoPreview(null); } setMessage({ type: 'success', text: 'Perro desactivado.' }); await loadData(); }
+  }
+
   return (
     <div className="grid twoCols">
       <section className="card">
-        <h2>Nuevo perro</h2>
+        <h2>{editingId ? 'Editar perro' : 'Nuevo perro'}</h2>
         <form onSubmit={handleSubmit} className="formGrid">
           <label>
             Cliente *
@@ -222,7 +243,8 @@ export function PerrosManager() {
             <textarea value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} rows={3} />
           </label>
           <div className="full actionsRow">
-            <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : 'Guardar perro'}</button>
+            <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Guardar perro'}</button>
+            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); setPhotoPreview(null); setPhotoFile(null); }}>Cancelar edición</button> : null}
           </div>
           {message ? <div className="full"><StatusMessage type={message.type} message={message.text} /></div> : null}
         </form>
@@ -237,7 +259,7 @@ export function PerrosManager() {
         {!loading && filtered.length === 0 ? <p>No hay perros todavía.</p> : null}
         <div className="listStack">
           {filtered.map((perro) => (
-            <article key={perro.id} className="listItem withImage">
+            <article key={perro.id} className="listItem withImage clickableItem" onClick={() => editPerro(perro)}>
               <div className="thumb">
                 {perro.foto_firmada ? <img src={perro.foto_firmada} alt={perro.nombre} /> : <span>🐶</span>}
               </div>
@@ -246,6 +268,7 @@ export function PerrosManager() {
                 <p>{perro.raza || 'Sin raza'} · {perro.cliente?.nombre || 'Sin cliente'}</p>
                 <small>{perro.alergias ? `Alergias: ${perro.alergias}` : 'Sin alertas registradas'}</small>
               </div>
+              <div className="itemActions"><button type="button" className="textButton" onClick={(event) => { event.stopPropagation(); editPerro(perro); }}>Editar</button><button type="button" className="textButton dangerTextButton" onClick={(event) => { event.stopPropagation(); deactivatePerro(perro); }}>Desactivar</button></div>
             </article>
           ))}
         </div>
