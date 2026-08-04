@@ -43,6 +43,7 @@ export function CalendarManager() {
       const { data, error: queryError } = await supabase
         .from('reservas')
         .select('id,fecha_llegada,fecha_salida,hora_estimada_llegada,hora_estimada_salida,estado,clientes(nombre,apellidos),servicios(nombre),reserva_perros(perros(nombre))')
+        .neq('estado', 'cancelada')
         .lte('fecha_llegada', to)
         .or(`fecha_salida.is.null,fecha_salida.gte.${from}`)
         .order('fecha_llegada')
