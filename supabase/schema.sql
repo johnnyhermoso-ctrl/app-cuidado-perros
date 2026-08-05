@@ -165,6 +165,19 @@ create table if not exists configuracion (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth_key text not null,
+  device_name text,
+  active boolean not null default true,
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists notas_reserva (
   id uuid primary key default gen_random_uuid(),
   reserva_id uuid not null references reservas(id) on delete cascade,
@@ -222,7 +235,8 @@ values
   ('margen_cortesia_horas', '2', 'Margen de cortesía para check-out en alojamiento'),
   ('sugerir_descuento_larga_estancia_desde_noches', '15', 'Sugerencia de larga estancia'),
   ('ciudad_festivos', 'Madrid', 'Ciudad de referencia para festivos'),
-  ('recargo_festivo_alojamiento', '2.00', 'Recargo por noche festiva y reserva')
+  ('recargo_festivo_alojamiento', '2.00', 'Recargo por noche festiva y reserva'),
+  ('vapid_public_key', 'BEoYaz1WY8kFYDOvJKGFS5_OCc_NWsZj42U686ry-z6JDzucnwRJaqT_yn3hQoqSqVHvO4HQ0g7z20lqG731AeA', 'Clave pública estándar Web Push')
 on conflict (clave) do nothing;
 
 insert into festivos (fecha, nombre, ambito, municipio, comunidad_autonoma, activo) values
@@ -290,6 +304,7 @@ alter table ajustes_reserva enable row level security;
 alter table pagos enable row level security;
 alter table festivos enable row level security;
 alter table configuracion enable row level security;
+alter table push_subscriptions enable row level security;
 alter table notas_reserva enable row level security;
 alter table series_recurrentes enable row level security;
 alter table ocurrencias_recurrentes enable row level security;
@@ -311,6 +326,12 @@ begin
     );
   end loop;
 end $$;
+
+drop policy if exists push_subscriptions_own_rows on push_subscriptions;
+create policy push_subscriptions_own_rows on push_subscriptions
+for all to authenticated
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
 
 -- El bucket es privado y limita formato y tamaño de las fotografías.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
