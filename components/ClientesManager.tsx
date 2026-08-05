@@ -21,6 +21,7 @@ export function ClientesManager() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   async function loadClientes() {
@@ -74,6 +75,7 @@ export function ClientesManager() {
     } else {
       setForm(emptyForm);
       setEditingId(null);
+      setFormOpen(false);
       setMessage({ type: 'success', text: editingId ? 'Cliente actualizado correctamente.' : 'Cliente creado correctamente.' });
       await loadClientes();
     }
@@ -82,6 +84,7 @@ export function ClientesManager() {
 
   function editCliente(cliente: Cliente) {
     setEditingId(cliente.id);
+    setFormOpen(true);
     setForm({ nombre: cliente.nombre, apellidos: cliente.apellidos || '', telefono: cliente.telefono || '', email: cliente.email || '', direccion: cliente.direccion || '', notas: cliente.notas || '' });
     setMessage(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -101,8 +104,8 @@ export function ClientesManager() {
   return (
     <div className="grid twoCols">
       <section className="card">
-        <h2>{editingId ? 'Editar cliente' : 'Nuevo cliente'}</h2>
-        <form onSubmit={handleSubmit} className="formGrid">
+        <div className="cardHeaderInline"><h2>{editingId ? 'Editar cliente' : 'Alta de cliente'}</h2><button type="button" className="button secondary" onClick={() => setFormOpen((open) => !open)}>{formOpen ? 'Cerrar' : '+ Nuevo cliente'}</button></div>
+        {formOpen ? <form onSubmit={handleSubmit} className="formGrid collapsibleForm">
           <label>
             Nombre *
             <input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
@@ -129,10 +132,11 @@ export function ClientesManager() {
           </label>
           <div className="full actionsRow">
             <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Guardar cliente'}</button>
-            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); }}>Cancelar edición</button> : null}
+            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); setFormOpen(false); }}>Cancelar edición</button> : null}
           </div>
           {message ? <div className="full"><StatusMessage type={message.type} message={message.text} /></div> : null}
-        </form>
+        </form> : null}
+        {!formOpen && message ? <StatusMessage type={message.type} message={message.text} /> : null}
       </section>
 
       <section className="card">

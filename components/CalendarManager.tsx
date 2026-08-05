@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { CalendarReservation, getDaySummary, getMonthGrid } from '@/lib/calendar';
 import { StatusMessage } from './StatusMessage';
@@ -18,6 +19,11 @@ const weekDays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
 function monthLabel(date: Date) {
   const label = new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(date);
   return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function bookingColor(id: string) {
+  const index = Array.from(id).reduce((total, character) => total + character.charCodeAt(0), 0) % 5;
+  return `calendarBookingColor${index + 1}`;
 }
 
 export function CalendarManager() {
@@ -108,10 +114,10 @@ export function CalendarManager() {
                       const joined = reservation as ReservationJoin;
                       const dogs = joined.reserva_perros?.map((item) => item.perros?.nombre).filter(Boolean).join(', ');
                       return (
-                        <div className="calendarBooking" key={reservation.id} title={`${joined.clientes?.nombre || 'Cliente'} · ${joined.servicios?.nombre || 'Servicio'}`}>
+                        <Link href={`/reservas/?reserva=${reservation.id}`} className={`calendarBooking ${bookingColor(reservation.id)}`} key={reservation.id} title={`Abrir reserva de ${joined.clientes?.nombre || 'Cliente'} · ${joined.servicios?.nombre || 'Servicio'}`}>
                           <strong>{dogs || joined.clientes?.nombre || 'Reserva'}</strong>
                           <span>{joined.servicios?.nombre || 'Servicio'} · {joined.estado}</span>
-                        </div>
+                        </Link>
                       );
                     })}
                     {summary.reservations.length > 3 ? <small>+{summary.reservations.length - 3} más</small> : null}
