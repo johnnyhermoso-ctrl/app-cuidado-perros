@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { calculateBillableUnits, calculateNights, calculateSubtotal, formatCurrency, formatDate } from '@/lib/utils';
 import { Cliente, Perro, Reserva, Servicio } from '@/lib/types';
@@ -29,6 +30,7 @@ const emptyForm = {
 };
 
 export function ReservasManager() {
+  const searchParams = useSearchParams();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [servicios, setServicios] = useState<Servicio[]>([]);
   const [perrosCliente, setPerrosCliente] = useState<Perro[]>([]);
@@ -42,6 +44,9 @@ export function ReservasManager() {
   const [rateLoading, setRateLoading] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const deepLinkHandled = useRef(false);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [holidayAmount, setHolidayAmount] = useState(2);
 
@@ -96,12 +101,38 @@ export function ReservasManager() {
       if (error) {
         setMessage({ type: 'error', text: error.message });
       } else {
-        setPerrosCliente((data || []) as Perro[]);
-        setSelectedDogIds([]);
+        const dogs = (data || []) as Perro[];
+        setPerrosCliente(dogs);
+        const linkedDogId = searchParams.get('perro');
+        if (editingId) {
+          const current = reservas.find((item) => item.id === editingId);
+          setSelectedDogIds(current?.reserva_perros?.map((item) => item.perro_id) ?? []);
+        } else if (linkedDogId && dogs.some((dog) => dog.id === linkedDogId)) {
+          setSelectedDogIds([linkedDogId]);
+        } else setSelectedDogIds([]);
       }
     }
     loadPerrosByCliente();
-  }, [form.cliente_id, editingId, reservas]);
+  }, [form.cliente_id, editingId, reservas, searchParams]);
+
+  useEffect(() => {
+    if (deepLinkHandled.current) return;
+    const reservationId = searchParams.get('reserva');
+    const clientId = searchParams.get('cliente');
+    if (reservationId) {
+      const reservation = reservas.find((item) => item.id === reservationId);
+      if (!reservation) return;
+      setHighlightedId(reservation.id);
+      if (['borrador', 'pendiente', 'confirmada', 'en_curso'].includes(reservation.estado)) editReservation(reservation);
+      else setMessage({ type: 'success', text: `Reserva ${reservation.estado.replace('_', ' ')} seleccionada en el listado.` });
+      window.setTimeout(() => document.getElementById(`reserva-${reservation.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+      deepLinkHandled.current = true;
+    } else if (clientId && clientes.some((client) => client.id === clientId)) {
+      setForm((current) => ({ ...current, cliente_id: clientId }));
+      setFormOpen(true);
+      deepLinkHandled.current = true;
+    }
+  }, [clientes, reservas, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -207,6 +238,7 @@ export function ReservasManager() {
 
       setForm(emptyForm);
       setEditingId(null);
+      setFormOpen(false);
       setSelectedDogIds([]);
       setPerrosCliente([]);
       setMessage({ type: 'success', text: editingId ? 'Reserva actualizada y recalculada correctamente.' : 'Reserva creada correctamente.' });
@@ -220,6 +252,7 @@ export function ReservasManager() {
 
   function editReservation(reservation: ReservaJoin) {
     setEditingId(reservation.id);
+    setFormOpen(true);
     setForm({ cliente_id: reservation.cliente_id, servicio_id: reservation.servicio_id, estado: reservation.estado, fecha_llegada: reservation.fecha_llegada || '', hora_estimada_llegada: reservation.hora_estimada_llegada?.slice(0, 5) || '', fecha_salida: reservation.fecha_salida || '', hora_estimada_salida: reservation.hora_estimada_salida?.slice(0, 5) || '', observaciones: reservation.observaciones || '' });
     setSelectedDogIds(reservation.reserva_perros?.map((item) => item.perro_id) ?? []);
     setMessage(null);
@@ -247,8 +280,8 @@ export function ReservasManager() {
   return (
     <div className="grid twoCols">
       <section className="card">
-        <h2>{editingId ? 'Editar reserva' : 'Nueva reserva'}</h2>
-        <form onSubmit={handleSubmit} className="formGrid">
+        <div className="cardHeaderInline"><h2>{editingId ? 'Editar reserva' : 'Alta de reserva'}</h2><button type="button" className="button secondary" onClick={() => setFormOpen((open) => !open)}>{formOpen ? 'Cerrar' : '+ Nueva reserva'}</button></div>
+        {formOpen ? <form onSubmit={handleSubmit} className="formGrid collapsibleForm">
           <label>
             Cliente *
             <select value={form.cliente_id} onChange={(e) => setForm({ ...form, cliente_id: e.target.value })}>
@@ -319,10 +352,11 @@ export function ReservasManager() {
           </div>
           <div className="full actionsRow">
             <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : editingId ? 'Guardar y recalcular' : 'Guardar reserva'}</button>
-            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); setSelectedDogIds([]); }}>Cancelar edición</button> : null}
+            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); setSelectedDogIds([]); setFormOpen(false); }}>Cancelar edición</button> : null}
           </div>
           {message ? <div className="full"><StatusMessage type={message.type} message={message.text} /></div> : null}
-        </form>
+        </form> : null}
+        {!formOpen && message ? <StatusMessage type={message.type} message={message.text} /> : null}
       </section>
 
       <section className="card">
@@ -331,7 +365,7 @@ export function ReservasManager() {
         {!loading && reservas.length === 0 ? <p>No hay reservas todavía.</p> : null}
         <div className="listStack">
           {reservas.map((reserva) => (
-            <article key={reserva.id} className="listItem">
+            <article id={`reserva-${reserva.id}`} key={reserva.id} className={`listItem ${highlightedId === reserva.id ? 'highlightedItem' : ''}`}>
               <div>
                 <strong>{reserva.clientes?.nombre || 'Cliente'} · {reserva.servicios?.nombre || 'Servicio'}</strong>
                 <p>

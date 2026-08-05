@@ -17,6 +17,7 @@ export function ServiciosManager() {
   const [services, setServices] = useState<Servicio[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -33,6 +34,7 @@ export function ServiciosManager() {
 
   function startEdit(service: Servicio) {
     setEditingId(service.id);
+    setFormOpen(true);
     setForm({
       codigo: service.codigo,
       nombre: service.nombre,
@@ -45,6 +47,7 @@ export function ServiciosManager() {
   function cancelEdit() {
     setEditingId(null);
     setForm(emptyForm);
+    setFormOpen(false);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -91,8 +94,8 @@ export function ServiciosManager() {
   return (
     <div className="grid twoCols">
       <section className="card">
-        <h2>{editingId ? 'Editar servicio' : 'Nuevo servicio'}</h2>
-        <form className="formGrid" onSubmit={handleSubmit}>
+        <div className="cardHeaderInline"><h2>{editingId ? 'Editar servicio' : 'Alta de servicio'}</h2><button type="button" className="button secondary" onClick={() => setFormOpen((open) => !open)}>{formOpen ? 'Cerrar' : '+ Nuevo servicio'}</button></div>
+        {formOpen ? <form className="formGrid collapsibleForm" onSubmit={handleSubmit}>
           <label>Código *<input value={form.codigo} disabled={Boolean(editingId)} onChange={(e) => setForm({ ...form, codigo: e.target.value })} placeholder="ej. alojamiento" /></label>
           <label>Nombre *<input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} /></label>
           <label>Unidad de cobro *
@@ -106,7 +109,8 @@ export function ServiciosManager() {
             {editingId ? <button type="button" className="button secondary" onClick={cancelEdit}>Cancelar</button> : null}
           </div>
           {message ? <div className="full"><StatusMessage type={message.type} message={message.text} /></div> : null}
-        </form>
+        </form> : null}
+        {!formOpen && message ? <StatusMessage type={message.type} message={message.text} /> : null}
       </section>
 
       <section className="card">

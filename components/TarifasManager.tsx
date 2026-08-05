@@ -16,6 +16,7 @@ export function TarifasManager() {
   const [rates, setRates] = useState<RateWithService[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -39,6 +40,7 @@ export function TarifasManager() {
 
   function startEdit(rate: RateWithService) {
     setEditingId(rate.id);
+    setFormOpen(true);
     setForm({
       servicio_id: rate.servicio_id,
       nombre_tarifa: rate.nombre_tarifa ?? '',
@@ -53,6 +55,7 @@ export function TarifasManager() {
   function resetForm() {
     setEditingId(null);
     setForm(emptyForm);
+    setFormOpen(false);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -104,8 +107,8 @@ export function TarifasManager() {
   return (
     <div className="grid twoCols">
       <section className="card">
-        <h2>{editingId ? 'Editar tarifa' : 'Nueva tarifa general'}</h2>
-        <form className="formGrid" onSubmit={handleSubmit}>
+        <div className="cardHeaderInline"><h2>{editingId ? 'Editar tarifa' : 'Alta de tarifa'}</h2><button type="button" className="button secondary" onClick={() => setFormOpen((open) => !open)}>{formOpen ? 'Cerrar' : '+ Nueva tarifa'}</button></div>
+        {formOpen ? <form className="formGrid collapsibleForm" onSubmit={handleSubmit}>
           <label>Servicio *
             <select value={form.servicio_id} onChange={(e) => setForm({ ...form, servicio_id: e.target.value })}>
               <option value="">Selecciona un servicio</option>
@@ -122,7 +125,8 @@ export function TarifasManager() {
             {editingId ? <button type="button" className="button secondary" onClick={resetForm}>Cancelar</button> : null}
           </div>
           {message ? <div className="full"><StatusMessage type={message.type} message={message.text} /></div> : null}
-        </form>
+        </form> : null}
+        {!formOpen && message ? <StatusMessage type={message.type} message={message.text} /> : null}
       </section>
 
       <section className="card">

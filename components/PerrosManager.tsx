@@ -28,6 +28,7 @@ export function PerrosManager() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -142,6 +143,7 @@ export function PerrosManager() {
       if (error) throw error;
       setForm(emptyForm);
       setEditingId(null);
+      setFormOpen(false);
       setPhotoFile(null);
       setPhotoPreview(null);
       setMessage({ type: 'success', text: editingId ? 'Perro actualizado correctamente.' : 'Perro creado correctamente.' });
@@ -156,6 +158,7 @@ export function PerrosManager() {
 
   function editPerro(perro: Perro & { foto_firmada?: string | null }) {
     setEditingId(perro.id);
+    setFormOpen(true);
     setForm({ cliente_id: perro.cliente_id, nombre: perro.nombre, raza: perro.raza || '', fecha_nacimiento: perro.fecha_nacimiento || '', sexo: perro.sexo || '', peso_kg: perro.peso_kg?.toString() || '', tamano: perro.tamano || '', numero_chip: perro.numero_chip || '', alergias: perro.alergias || '', medicacion: perro.medicacion || '', alimentacion: perro.alimentacion || '', observaciones: perro.observaciones || '' });
     setPhotoFile(null);
     setPhotoPreview(perro.foto_firmada || null);
@@ -173,8 +176,8 @@ export function PerrosManager() {
   return (
     <div className="grid twoCols">
       <section className="card">
-        <h2>{editingId ? 'Editar perro' : 'Nuevo perro'}</h2>
-        <form onSubmit={handleSubmit} className="formGrid">
+        <div className="cardHeaderInline"><h2>{editingId ? 'Editar perro' : 'Alta de perro'}</h2><button type="button" className="button secondary" onClick={() => setFormOpen((open) => !open)}>{formOpen ? 'Cerrar' : '+ Nuevo perro'}</button></div>
+        {formOpen ? <form onSubmit={handleSubmit} className="formGrid collapsibleForm">
           <label>
             Cliente *
             <select value={form.cliente_id} onChange={(e) => setForm({ ...form, cliente_id: e.target.value })}>
@@ -244,10 +247,11 @@ export function PerrosManager() {
           </label>
           <div className="full actionsRow">
             <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Guardar perro'}</button>
-            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); setPhotoPreview(null); setPhotoFile(null); }}>Cancelar edición</button> : null}
+            {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); setPhotoPreview(null); setPhotoFile(null); setFormOpen(false); }}>Cancelar edición</button> : null}
           </div>
           {message ? <div className="full"><StatusMessage type={message.type} message={message.text} /></div> : null}
-        </form>
+        </form> : null}
+        {!formOpen && message ? <StatusMessage type={message.type} message={message.text} /> : null}
       </section>
 
       <section className="card">
@@ -268,7 +272,7 @@ export function PerrosManager() {
                 <p>{perro.raza || 'Sin raza'} · {perro.cliente?.nombre || 'Sin cliente'}</p>
                 <small>{perro.alergias ? `Alergias: ${perro.alergias}` : 'Sin alertas registradas'}</small>
               </div>
-              <div className="itemActions"><button type="button" className="textButton" onClick={(event) => { event.stopPropagation(); editPerro(perro); }}>Editar</button><button type="button" className="textButton dangerTextButton" onClick={(event) => { event.stopPropagation(); deactivatePerro(perro); }}>Desactivar</button></div>
+              <div className="itemActions"><a className="textButton" href={`/reservas/?cliente=${perro.cliente_id}&perro=${perro.id}`} onClick={(event) => event.stopPropagation()}>Crear reserva</a><button type="button" className="textButton" onClick={(event) => { event.stopPropagation(); editPerro(perro); }}>Editar</button><button type="button" className="textButton dangerTextButton" onClick={(event) => { event.stopPropagation(); deactivatePerro(perro); }}>Desactivar</button></div>
             </article>
           ))}
         </div>
