@@ -16,6 +16,7 @@ const links = [
   { href: '/cobros', label: 'Cobros' },
   { href: '/calendario', label: 'Calendario' },
   { href: '/festivos', label: 'Festivos' },
+  { href: '/notificaciones', label: 'Notificaciones' },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
