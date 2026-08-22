@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
-import { calculateBillableUnits, calculateNights, calculateSubtotal, formatCurrency, formatDate } from '@/lib/utils';
+import { calculateBillableUnits, calculateNights, calculateSubtotal, exceedsCheckoutGrace, formatCurrency, formatDate } from '@/lib/utils';
 import { Cliente, Perro, Reserva, Servicio } from '@/lib/types';
 import { getReservationActions, getReservationTimestampUpdate, ReservationStatus } from '@/lib/reservation-state';
 import { StatusMessage } from './StatusMessage';
@@ -13,7 +13,7 @@ type ReservaJoin = Reserva & {
   clientes?: Cliente;
   servicios?: Servicio;
   reserva_perros?: Array<{ perro_id: string; perros?: Perro }>;
-  ajustes_reserva?: Array<{ tipo: 'descuento' | 'recargo'; concepto: string; importe: number; estado: string; modo: string | null }>;
+  ajustes_reserva?: Array<{ tipo: 'descuento' | 'recargo'; concepto: string; importe: number; cantidad: number | null; descripcion: string | null; estado: string; modo: string | null }>;
 };
 
 type ApplicableRate = { price: number; origin: 'especial_cliente' | 'general' };
@@ -49,13 +49,17 @@ export function ReservasManager() {
   const deepLinkHandled = useRef(false);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [holidayAmount, setHolidayAmount] = useState(2);
+  const [graceHours, setGraceHours] = useState(2);
+  const [daycareRate, setDaycareRate] = useState<ApplicableRate | null>(null);
+  const [daycareRateLoading, setDaycareRateLoading] = useState(false);
 
   async function loadStaticData() {
-    const [{ data: clientesData, error: clientesError }, { data: serviciosData, error: serviciosError }, holidayData, holidayConfig] = await Promise.all([
+    const [{ data: clientesData, error: clientesError }, { data: serviciosData, error: serviciosError }, holidayData, holidayConfig, graceConfig] = await Promise.all([
       supabase.from('clientes').select('*').eq('activo', true).order('nombre'),
       supabase.from('servicios').select('*').eq('activo', true).order('nombre'),
       supabase.from('festivos').select('fecha,activo').eq('activo', true),
       supabase.from('configuracion').select('valor').eq('clave', 'recargo_festivo_alojamiento').maybeSingle(),
+      supabase.from('configuracion').select('valor').eq('clave', 'margen_cortesia_horas').maybeSingle(),
     ]);
 
     if (clientesError || serviciosError) {
@@ -65,6 +69,7 @@ export function ReservasManager() {
       setServicios((serviciosData || []) as Servicio[]);
       setHolidays((holidayData.data ?? []) as Holiday[]);
       setHolidayAmount(Number(holidayConfig.data?.valor ?? 2));
+      setGraceHours(Number(graceConfig.data?.valor ?? 2));
     }
   }
 
@@ -72,7 +77,7 @@ export function ReservasManager() {
     setLoading(true);
     const { data, error } = await supabase
       .from('reservas')
-      .select('*, clientes(*), servicios(*), reserva_perros(perro_id, perros(*)), ajustes_reserva(tipo,concepto,importe,estado,modo)')
+      .select('*, clientes(*), servicios(*), reserva_perros(perro_id, perros(*)), ajustes_reserva(tipo,concepto,importe,cantidad,descripcion,estado,modo)')
       .order('created_at', { ascending: false });
     if (error) {
       setMessage({ type: 'error', text: error.message });
@@ -183,6 +188,39 @@ export function ReservasManager() {
     return () => { cancelled = true; };
   }, [form.cliente_id, form.servicio_id, form.fecha_llegada]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDaycareRate() {
+      const daycare = servicios.find((item) => item.codigo === 'guarderia');
+      if (!form.cliente_id || !form.fecha_llegada || !daycare) {
+        setDaycareRate(null);
+        return;
+      }
+      setDaycareRateLoading(true);
+      const special = await supabase.from('tarifas_especiales_cliente').select('precio_especial')
+        .eq('cliente_id', form.cliente_id).eq('servicio_id', daycare.id).eq('activa', true)
+        .or(`vigencia_desde.is.null,vigencia_desde.lte.${form.fecha_llegada}`)
+        .or(`vigencia_hasta.is.null,vigencia_hasta.gte.${form.fecha_llegada}`)
+        .order('vigencia_desde', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (!cancelled && special.data) {
+        setDaycareRate({ price: Number(special.data.precio_especial), origin: 'especial_cliente' });
+        setDaycareRateLoading(false);
+        return;
+      }
+      const general = await supabase.from('tarifas_generales').select('precio_base')
+        .eq('servicio_id', daycare.id).eq('activa', true)
+        .or(`vigencia_desde.is.null,vigencia_desde.lte.${form.fecha_llegada}`)
+        .or(`vigencia_hasta.is.null,vigencia_hasta.gte.${form.fecha_llegada}`)
+        .order('vigencia_desde', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (!cancelled) {
+        setDaycareRate(general.data ? { price: Number(general.data.precio_base), origin: 'general' } : null);
+        setDaycareRateLoading(false);
+      }
+    }
+    loadDaycareRate();
+    return () => { cancelled = true; };
+  }, [form.cliente_id, form.fecha_llegada, servicios]);
+
   const nights = useMemo(() => calculateNights(form.fecha_llegada, form.fecha_salida), [form.fecha_llegada, form.fecha_salida]);
   const selectedService = useMemo(() => servicios.find((item) => item.id === form.servicio_id), [servicios, form.servicio_id]);
   const billableUnits = useMemo(
@@ -191,6 +229,8 @@ export function ReservasManager() {
   );
   const provisionalSubtotal = applicableRate ? calculateSubtotal(applicableRate.price, billableUnits, selectedDogIds.length) : 0;
   const holidayPreview = useMemo(() => selectedService?.tipo_unidad_cobro === 'por_noche' ? holidaySurcharge(form.fecha_llegada, form.fecha_salida, holidays, holidayAmount) : { dates: [], count: 0, total: 0 }, [selectedService, form.fecha_llegada, form.fecha_salida, holidays, holidayAmount]);
+  const daycareApplies = selectedService?.tipo_unidad_cobro === 'por_noche' && exceedsCheckoutGrace(form.hora_estimada_llegada, form.hora_estimada_salida, graceHours);
+  const daycarePreview = daycareApplies && daycareRate ? calculateSubtotal(daycareRate.price, 1, selectedDogIds.length) : 0;
 
   function toggleDog(id: string) {
     setSelectedDogIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
@@ -217,6 +257,10 @@ export function ReservasManager() {
     }
     if (!applicableRate) {
       setMessage({ type: 'error', text: 'No existe una tarifa activa para el servicio y la fecha seleccionados.' });
+      return;
+    }
+    if (daycareApplies && !daycareRate) {
+      setMessage({ type: 'error', text: 'La salida supera el margen de cortesía, pero no existe una tarifa activa de guardería.' });
       return;
     }
     setSaving(true);
@@ -346,7 +390,9 @@ export function ReservasManager() {
             <p>Unidades: {billableUnits} · Perros: {selectedDogIds.length}</p>
             <p>Subtotal: <strong>{formatCurrency(provisionalSubtotal)}</strong></p>
             <p>Festivos: {holidayPreview.count} noche(s) · <strong>{formatCurrency(holidayPreview.total)}</strong></p>
-            <p>Total previsto: <strong>{formatCurrency(provisionalSubtotal + holidayPreview.total)}</strong></p>
+            <p>Margen de cortesía: {graceHours} hora(s)</p>
+            <p>Guardería por exceso horario: {daycareRateLoading ? 'Buscando tarifa…' : daycareApplies ? `1 × ${selectedDogIds.length} perro(s) × ${daycareRate ? formatCurrency(daycareRate.price) : 'sin tarifa'}` : 'No aplica'} · <strong>{formatCurrency(daycarePreview)}</strong></p>
+            <p>Total previsto: <strong>{formatCurrency(provisionalSubtotal + holidayPreview.total + daycarePreview)}</strong></p>
             <p>Sugerencia larga estancia: {nights >= 15 ? 'Sí' : 'No'}</p>
             <p>Sugerencia segundo perro: {selectedDogIds.length > 1 ? 'Sí' : 'No'}</p>
           </div>
@@ -377,10 +423,10 @@ export function ReservasManager() {
                 </small>
                 <div className="reservationBreakdown">
                   <strong>Desglose</strong>
-                  <div><span>{reserva.numero_noches || 1} noche(s) × {formatCurrency(reserva.tarifa_aplicada)}</span><span>{formatCurrency(reserva.subtotal)}</span></div>
+                  <div><span>{reserva.numero_noches || 1} noche(s) × {reserva.reserva_perros?.length || 1} perro(s) × {formatCurrency(reserva.tarifa_aplicada)}</span><span>{formatCurrency(reserva.subtotal)}</span></div>
                   {(reserva.ajustes_reserva || []).filter((ajuste) => ajuste.estado === 'activo').map((ajuste, index) => (
                     <div key={`${ajuste.modo || ajuste.tipo}-${index}`}>
-                      <span>{ajuste.concepto}</span>
+                      <span>{ajuste.concepto}{ajuste.descripcion ? ` · ${ajuste.descripcion}` : ''}</span>
                       <span>{ajuste.tipo === 'descuento' ? '−' : '+'}{formatCurrency(ajuste.importe)}</span>
                     </div>
                   ))}
