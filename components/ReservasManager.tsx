@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase/client';
 import { calculateBillableUnits, calculateNights, calculateSubtotal, exceedsCheckoutGrace, formatCurrency, formatDate } from '@/lib/utils';
 import { Cliente, Perro, Reserva, Servicio } from '@/lib/types';
 import { getReservationActions, getReservationTimestampUpdate, ReservationStatus } from '@/lib/reservation-state';
+import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
 import { StatusMessage } from './StatusMessage';
 import { holidaySurcharge, type Holiday } from '@/lib/holidays';
 import { capacityExceededDates } from '@/lib/capacity';
@@ -448,13 +449,13 @@ export function ReservasManager() {
           {reservas.map((reserva) => (
             <article id={`reserva-${reserva.id}`} key={reserva.id} className={`listItem ${highlightedId === reserva.id ? 'highlightedItem' : ''}`}>
               <div>
-                <strong>{reserva.clientes?.nombre || 'Cliente'} · {reserva.servicios?.nombre || 'Servicio'}</strong>
+                <strong>{reservationDogNames(reserva)} · {reserva.servicios?.nombre || 'Servicio'}</strong>
                 <p>
                   {formatDate(reserva.fecha_llegada)} {reserva.hora_estimada_llegada || ''}
                   {reserva.fecha_salida ? ` → ${formatDate(reserva.fecha_salida)} ${reserva.hora_estimada_salida || ''}` : ''}
                 </p>
                 <small>
-                  Perros: {reserva.reserva_perros?.map((item) => item.perros?.nombre).filter(Boolean).join(', ') || '—'}
+                  Dueño: {reservationOwnerName(reserva)}
                 </small>
                 <div className="reservationBreakdown">
                   <strong>Desglose</strong>

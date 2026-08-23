@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { StatusMessage } from './StatusMessage';
 import { formatDate } from '@/lib/utils';
+import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
 
 type PushState = 'checking' | 'unsupported' | 'inactive' | 'active' | 'denied';
 type NotificationItem = {
@@ -32,7 +33,7 @@ type CareReservation = {
   id: string;
   fecha_llegada: string | null;
   fecha_salida: string | null;
-  clientes?: { nombre: string } | null;
+  clientes?: { nombre: string; apellidos?: string | null } | null;
   reserva_perros?: Array<{ perros?: CareDog | null }>;
 };
 
@@ -79,7 +80,7 @@ export function PushNotificationsManager() {
     const [notificationResult, careResult, reservationResult, configResult] = await Promise.all([
       supabase.from('notificaciones_operativas').select('id,reserva_id,tipo,titulo,cuerpo,scheduled_for,estado').order('scheduled_for', { ascending: false }).limit(30),
       supabase.from('recordatorios_cuidado').select('*,perros(nombre),reservas(clientes(nombre))').order('hora'),
-      supabase.from('reservas').select('id,fecha_llegada,fecha_salida,clientes(nombre),reserva_perros(perros(id,nombre,medicacion,alimentacion))').in('estado', ['confirmada', 'en_curso']).order('fecha_llegada'),
+      supabase.from('reservas').select('id,fecha_llegada,fecha_salida,clientes(nombre,apellidos),reserva_perros(perros(id,nombre,medicacion,alimentacion))').in('estado', ['confirmada', 'en_curso']).order('fecha_llegada'),
       supabase.from('configuracion').select('clave,valor').in('clave', Object.values(configKeys)),
     ]);
     const firstError = notificationResult.error || careResult.error || reservationResult.error || configResult.error;
@@ -274,7 +275,7 @@ export function PushNotificationsManager() {
           <h2>Cuidados durante una reserva</h2>
           <p className="muted">El texto se propone desde la ficha del perro, pero el horario se configura para cada estancia.</p>
           <form className="formGrid oneColumn" onSubmit={saveCareReminder}>
-            <label>Reserva<select value={careForm.reserva_id} onChange={(event) => setCareForm({ ...careForm, reserva_id: event.target.value, perro_id: '', descripcion: '' })}><option value="">Selecciona una reserva</option>{reservations.map((item) => <option key={item.id} value={item.id}>{item.clientes?.nombre || 'Cliente'} · {formatDate(item.fecha_llegada)}–{formatDate(item.fecha_salida)}</option>)}</select></label>
+            <label>Reserva<select value={careForm.reserva_id} onChange={(event) => setCareForm({ ...careForm, reserva_id: event.target.value, perro_id: '', descripcion: '' })}><option value="">Selecciona una reserva</option>{reservations.map((item) => <option key={item.id} value={item.id}>{reservationDogNames(item)} · Dueño: {reservationOwnerName(item)} · {formatDate(item.fecha_llegada)}–{formatDate(item.fecha_salida)}</option>)}</select></label>
             <label>Perro<select value={careForm.perro_id} onChange={(event) => selectCareDog(event.target.value)}><option value="">Selecciona un perro</option>{availableDogs.map((dog) => <option key={dog.id} value={dog.id}>{dog.nombre}</option>)}</select></label>
             <label>Tipo<select value={careForm.tipo} onChange={(event) => selectCareDog(careForm.perro_id, event.target.value as 'medicacion' | 'alimentacion')}><option value="medicacion">Medicación</option><option value="alimentacion">Alimentación</option></select></label>
             <label>Hora<input type="time" value={careForm.hora} onChange={(event) => setCareForm({ ...careForm, hora: event.target.value })} /></label>

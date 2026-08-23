@@ -3,13 +3,15 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { calculateBalance, formatCurrency, formatDate } from '@/lib/utils';
+import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
 import { StatusMessage } from './StatusMessage';
 
 type Adjustment = { id: string; tipo: 'descuento' | 'recargo'; concepto: string; importe: number; descripcion: string | null; estado: 'activo' | 'anulado'; created_at: string };
 type Payment = { id: string; fecha_pago: string; importe: number; metodo_pago: string | null; estado: 'confirmado' | 'anulado'; referencia: string | null; observaciones: string | null; created_at: string };
 type EconomicBooking = {
   id: string; fecha_llegada: string | null; estado: string; subtotal: number; total_descuentos: number; total_recargos: number; total_final: number;
-  clientes?: { nombre: string } | null; servicios?: { nombre: string } | null; ajustes_reserva?: Adjustment[]; pagos?: Payment[];
+  clientes?: { nombre: string; apellidos?: string | null } | null; servicios?: { nombre: string } | null;
+  reserva_perros?: Array<{ perros?: { nombre: string } | null }> | null; ajustes_reserva?: Adjustment[]; pagos?: Payment[];
 };
 
 type AdjustmentForm = { tipo: 'descuento' | 'recargo'; concepto: string; importe: string; descripcion: string };
@@ -29,7 +31,7 @@ export function CobrosManager() {
     setLoading(true);
     const { data, error } = await supabase
       .from('reservas')
-      .select('id,fecha_llegada,estado,subtotal,total_descuentos,total_recargos,total_final,clientes(nombre),servicios(nombre),ajustes_reserva(*),pagos(*)')
+      .select('id,fecha_llegada,estado,subtotal,total_descuentos,total_recargos,total_final,clientes(nombre,apellidos),servicios(nombre),reserva_perros(perros(nombre)),ajustes_reserva(*),pagos(*)')
       .neq('estado', 'cancelada')
       .order('fecha_llegada', { ascending: false });
     if (error) setMessage({ type: 'error', text: error.message });
@@ -116,7 +118,7 @@ export function CobrosManager() {
       <section className="card">
         <label>Reserva
           <select value={selectedId} onChange={(e) => { setSelectedId(e.target.value); setMessage(null); }}>
-            {bookings.map((item) => <option key={item.id} value={item.id}>{formatDate(item.fecha_llegada)} · {item.clientes?.nombre} · {item.servicios?.nombre}</option>)}
+            {bookings.map((item) => <option key={item.id} value={item.id}>{reservationDogNames(item)} · Dueño: {reservationOwnerName(item)} · {formatDate(item.fecha_llegada)} · {item.servicios?.nombre}</option>)}
           </select>
         </label>
       </section>

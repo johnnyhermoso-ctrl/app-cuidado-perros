@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { buildOperationalMetrics, reservationBalance, type DashboardReservation } from '@/lib/dashboard';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
 import { StatusMessage } from './StatusMessage';
 
 type Booking = Omit<DashboardReservation, 'reserva_perros'> & {
@@ -83,12 +84,12 @@ export function DashboardManager() {
         <section className="card">
           <div className="cardHeaderInline"><h2>Próximas reservas</h2><Link className="textButton" href="/calendario/">Calendario</Link></div>
           {upcoming.length === 0 ? <p className="muted">No hay próximas reservas registradas.</p> : null}
-          <div className="listStack">{upcoming.map((booking) => <article className="listItem" key={booking.id}><div><strong>{booking.clientes?.nombre ?? 'Cliente'} · {booking.servicios?.nombre ?? 'Servicio'}</strong><p>{formatDate(booking.fecha_llegada)} {booking.hora_estimada_llegada?.slice(0, 5) ?? ''}</p><small>{booking.reserva_perros?.map((item) => item.perros?.nombre).filter(Boolean).join(', ') || 'Sin perro asignado'}</small></div><span className={`pill state-${booking.estado}`}>{booking.estado.replace('_', ' ')}</span></article>)}</div>
+          <div className="listStack">{upcoming.map((booking) => <article className="listItem" key={booking.id}><div><strong>{reservationDogNames(booking)}</strong><p>{formatDate(booking.fecha_llegada)} {booking.hora_estimada_llegada?.slice(0, 5) ?? ''} · {booking.servicios?.nombre ?? 'Servicio'}</p><small>Dueño: {reservationOwnerName(booking)}</small></div><span className={`pill state-${booking.estado}`}>{booking.estado.replace('_', ' ')}</span></article>)}</div>
         </section>
         <section className="card">
           <div className="cardHeaderInline"><h2>Cobros pendientes</h2><Link className="textButton" href="/cobros/">Gestionar</Link></div>
           {pendingPayments.length === 0 ? <p className="muted">No hay saldos pendientes.</p> : null}
-          <div className="listStack">{pendingPayments.map((booking) => <article className="listItem" key={booking.id}><div><strong>{booking.clientes?.nombre ?? 'Cliente'} · {booking.servicios?.nombre ?? 'Servicio'}</strong><p>{formatDate(booking.fecha_llegada)} · Total {formatCurrency(Number(booking.total_final ?? 0))}</p></div><strong className="balanceDue">{formatCurrency(reservationBalance(booking))}</strong></article>)}</div>
+          <div className="listStack">{pendingPayments.map((booking) => <article className="listItem" key={booking.id}><div><strong>{reservationDogNames(booking)}</strong><p>Dueño: {reservationOwnerName(booking)} · {booking.servicios?.nombre ?? 'Servicio'}</p><small>{formatDate(booking.fecha_llegada)} · Total {formatCurrency(Number(booking.total_final ?? 0))}</small></div><strong className="balanceDue">{formatCurrency(reservationBalance(booking))}</strong></article>)}</div>
         </section>
       </div>
     </>
