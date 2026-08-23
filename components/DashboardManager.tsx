@@ -10,7 +10,7 @@ import { StatusMessage } from './StatusMessage';
 
 type Booking = Omit<DashboardReservation, 'reserva_perros'> & {
   hora_estimada_llegada: string | null;
-  clientes?: { nombre: string } | null;
+  clientes?: { nombre: string; apellidos?: string | null } | null;
   servicios?: { nombre: string } | null;
   reserva_perros?: { perro_id: string; perros?: { nombre: string } | null }[] | null;
 };
@@ -39,7 +39,7 @@ export function DashboardManager() {
       const [clientes, perros, reservas, pagos] = await Promise.all([
         supabase.from('clientes').select('*', { count: 'exact', head: true }).eq('activo', true),
         supabase.from('perros').select('*', { count: 'exact', head: true }).eq('activo', true),
-        supabase.from('reservas').select('id,estado,fecha_llegada,hora_estimada_llegada,fecha_salida,total_final,clientes(nombre),servicios(nombre),reserva_perros(perro_id,perros(nombre)),pagos(importe,estado)').neq('estado', 'cancelada').order('fecha_llegada').order('hora_estimada_llegada'),
+        supabase.from('reservas').select('id,estado,fecha_llegada,hora_estimada_llegada,fecha_salida,total_final,clientes(nombre,apellidos),servicios(nombre),reserva_perros(perro_id,perros(nombre)),pagos(importe,estado)').neq('estado', 'cancelada').order('fecha_llegada').order('hora_estimada_llegada'),
         supabase.from('pagos').select('importe').eq('estado', 'confirmado').gte('fecha_pago', start).lt('fecha_pago', next),
       ]);
       const firstError = clientes.error || perros.error || reservas.error || pagos.error;
