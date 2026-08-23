@@ -1,0 +1,22 @@
+name: Procesar notificaciones
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generar y enviar avisos pendientes
+        env:
+          NOTIFICATION_CRON_SECRET: ${{ secrets.NOTIFICATION_CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "x-cron-secret: ${NOTIFICATION_CRON_SECRET}" \
+            https://rdloepwizihknywifhet.supabase.co/functions/v1/notification-dispatch

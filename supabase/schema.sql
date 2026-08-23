@@ -843,3 +843,334 @@ $$;
 
 revoke all on function actualizar_reserva(uuid, uuid, uuid, uuid[], date, time, date, time, text) from public;
 grant execute on function actualizar_reserva(uuid, uuid, uuid, uuid[], date, time, date, time, text) to authenticated;
+
+-- Segunda entrega: recordatorios operativos y cola de notificaciones push.
+create table if not exists recordatorios_cuidado (
+  id uuid primary key default gen_random_uuid(),
+  reserva_id uuid not null references reservas(id) on delete cascade,
+  perro_id uuid not null references perros(id) on delete restrict,
+  tipo text not null check (tipo in ('medicacion', 'alimentacion')),
+  descripcion text not null,
+  hora time not null,
+  activo boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists notificaciones_operativas (
+  id uuid primary key default gen_random_uuid(),
+  reserva_id uuid references reservas(id) on delete cascade,
+  recordatorio_cuidado_id uuid references recordatorios_cuidado(id) on delete cascade,
+  tipo text not null check (tipo in (
+    'entrada_48h', 'entrada_dia', 'salida_48h', 'salida_dia',
+    'cuidado', 'cobro_pendiente', 'checkin_atrasado', 'checkout_atrasado',
+    'hueco_liberado'
+  )),
+  titulo text not null,
+  cuerpo text not null,
+  scheduled_for timestamptz not null,
+  estado text not null default 'pendiente' check (estado in ('pendiente', 'enviada', 'descartada', 'completada', 'cancelada')),
+  dedupe_key text not null unique,
+  sent_at timestamptz,
+  snoozed_at timestamptz,
+  acted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists notificaciones_operativas_pendientes_idx
+on notificaciones_operativas (scheduled_for)
+where estado = 'pendiente';
+
+insert into configuracion (clave, valor, descripcion) values
+  ('notificaciones_hora_inicio_descanso', '22:00', 'Inicio de la franja sin avisos push'),
+  ('notificaciones_hora_fin_descanso', '08:00', 'Fin de la franja sin avisos push'),
+  ('notificaciones_hora_aviso_dia', '08:30', 'Hora del segundo aviso de entrada y salida'),
+  ('notificaciones_hora_revision_estado', '09:00', 'Hora para recordar check-in y check-out pendientes'),
+  ('notificaciones_horas_cobro_pendiente', '24', 'Horas tras la salida para avisar de un cobro pendiente')
+on conflict (clave) do nothing;
+
+-- El documento funcional fija cuatro perros como capacidad de referencia.
+update configuracion
+set valor = '4', descripcion = 'Número máximo de perros alojados', updated_at = now()
+where clave = 'capacidad_maxima_alojamiento' and valor = '5';
+
+alter table recordatorios_cuidado enable row level security;
+alter table notificaciones_operativas enable row level security;
+
+drop policy if exists authenticated_access on recordatorios_cuidado;
+create policy authenticated_access on recordatorios_cuidado
+for all to authenticated using (true) with check (true);
+
+drop policy if exists authenticated_access on notificaciones_operativas;
+create policy authenticated_access on notificaciones_operativas
+for all to authenticated using (true) with check (true);
+
+create or replace function ajustar_horario_notificacion(p_fecha timestamptz)
+returns timestamptz
+language plpgsql
+set search_path = ''
+as $$
+declare
+  local_value timestamp;
+  quiet_start time := '22:00';
+  quiet_end time := '08:00';
+begin
+  select coalesce(max(valor) filter (where clave = 'notificaciones_hora_inicio_descanso'), '22:00')::time,
+         coalesce(max(valor) filter (where clave = 'notificaciones_hora_fin_descanso'), '08:00')::time
+  into quiet_start, quiet_end
+  from public.configuracion;
+  local_value := p_fecha at time zone 'Europe/Madrid';
+  if local_value::time >= quiet_start then
+    local_value := (local_value::date + 1) + quiet_end;
+  elsif local_value::time < quiet_end then
+    local_value := local_value::date + quiet_end;
+  end if;
+  return local_value at time zone 'Europe/Madrid';
+end;
+$$;
+
+create or replace function programar_notificaciones_operativas(p_now timestamptz default now())
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  local_today date := (p_now at time zone 'Europe/Madrid')::date;
+  day_notice time := '08:30';
+  review_time time := '09:00';
+  payment_delay integer := 24;
+  affected integer := 0;
+  row_count_value integer;
+begin
+  select coalesce(max(valor) filter (where clave = 'notificaciones_hora_aviso_dia'), '08:30')::time,
+         coalesce(max(valor) filter (where clave = 'notificaciones_hora_revision_estado'), '09:00')::time,
+         coalesce(max(valor) filter (where clave = 'notificaciones_horas_cobro_pendiente'), '24')::integer
+  into day_notice, review_time, payment_delay
+  from public.configuracion;
+
+  insert into public.notificaciones_operativas (reserva_id, tipo, titulo, cuerpo, scheduled_for, dedupe_key)
+  select r.id, event_data.tipo, event_data.titulo,
+         event_data.cuerpo,
+         public.ajustar_horario_notificacion(event_data.scheduled_for),
+         'reserva:' || r.id || ':' || event_data.tipo
+  from public.reservas r
+  join public.clientes c on c.id = r.cliente_id
+  cross join lateral (values
+    ('entrada_48h', 'Entrada próxima', c.nombre || ': entrada prevista en dos días.', ((r.fecha_llegada + r.hora_estimada_llegada) at time zone 'Europe/Madrid') - interval '48 hours'),
+    ('entrada_dia', 'Entrada prevista hoy', c.nombre || ': revisa la entrada prevista para hoy.', ((r.fecha_llegada + day_notice) at time zone 'Europe/Madrid')),
+    ('salida_48h', 'Salida próxima', c.nombre || ': salida prevista en dos días.', ((r.fecha_salida + coalesce(r.hora_estimada_salida, time '12:00')) at time zone 'Europe/Madrid') - interval '48 hours'),
+    ('salida_dia', 'Salida prevista hoy', c.nombre || ': revisa la salida prevista para hoy.', ((r.fecha_salida + day_notice) at time zone 'Europe/Madrid'))
+  ) as event_data(tipo, titulo, cuerpo, scheduled_for)
+  where r.estado in ('pendiente', 'confirmada', 'en_curso')
+    and r.fecha_llegada is not null and r.hora_estimada_llegada is not null
+    and r.fecha_salida is not null
+    and r.fecha_llegada <= local_today + 120
+    and r.fecha_salida >= local_today - 2
+    and event_data.scheduled_for >= p_now - interval '2 hours'
+    and not (event_data.tipo like 'entrada%' and r.checkin_real_at is not null)
+    and not (event_data.tipo like 'salida%' and r.checkout_real_at is not null)
+  on conflict (dedupe_key) do update
+  set titulo = excluded.titulo, cuerpo = excluded.cuerpo, scheduled_for = excluded.scheduled_for, updated_at = now()
+  where notificaciones_operativas.estado = 'pendiente' and notificaciones_operativas.snoozed_at is null;
+  get diagnostics row_count_value = row_count; affected := affected + row_count_value;
+
+  insert into public.notificaciones_operativas (reserva_id, tipo, titulo, cuerpo, scheduled_for, dedupe_key)
+  select r.id, 'checkin_atrasado', 'Check-in pendiente', c.nombre || ': confirma el check-in previsto ayer.',
+         ((r.fecha_llegada + 1 + review_time) at time zone 'Europe/Madrid'),
+         'reserva:' || r.id || ':checkin_atrasado'
+  from public.reservas r join public.clientes c on c.id = r.cliente_id
+  where r.estado in ('pendiente', 'confirmada') and r.checkin_real_at is null and r.fecha_llegada is not null
+    and r.fecha_llegada >= local_today - 7
+    and ((r.fecha_llegada + 1 + review_time) at time zone 'Europe/Madrid') >= p_now - interval '36 hours'
+  on conflict (dedupe_key) do update set scheduled_for = excluded.scheduled_for, cuerpo = excluded.cuerpo, updated_at = now()
+  where notificaciones_operativas.estado = 'pendiente' and notificaciones_operativas.snoozed_at is null;
+  get diagnostics row_count_value = row_count; affected := affected + row_count_value;
+
+  insert into public.notificaciones_operativas (reserva_id, tipo, titulo, cuerpo, scheduled_for, dedupe_key)
+  select r.id, 'checkout_atrasado', 'Check-out pendiente', c.nombre || ': confirma el check-out previsto ayer.',
+         ((r.fecha_salida + 1 + review_time) at time zone 'Europe/Madrid'),
+         'reserva:' || r.id || ':checkout_atrasado'
+  from public.reservas r join public.clientes c on c.id = r.cliente_id
+  where r.estado = 'en_curso' and r.checkout_real_at is null and r.fecha_salida is not null
+    and r.fecha_salida >= local_today - 7
+    and ((r.fecha_salida + 1 + review_time) at time zone 'Europe/Madrid') >= p_now - interval '36 hours'
+  on conflict (dedupe_key) do update set scheduled_for = excluded.scheduled_for, cuerpo = excluded.cuerpo, updated_at = now()
+  where notificaciones_operativas.estado = 'pendiente' and notificaciones_operativas.snoozed_at is null;
+  get diagnostics row_count_value = row_count; affected := affected + row_count_value;
+
+  insert into public.notificaciones_operativas (reserva_id, tipo, titulo, cuerpo, scheduled_for, dedupe_key)
+  select r.id, 'cobro_pendiente', 'Cobro pendiente',
+         c.nombre || ': quedan ' || trim(to_char(greatest(r.total_final - coalesce(sum(p.importe) filter (where p.estado = 'confirmado'), 0), 0), 'FM999999990D00')) || ' € pendientes.',
+         (((r.fecha_salida + coalesce(r.hora_estimada_salida, time '12:00')) at time zone 'Europe/Madrid') + make_interval(hours => payment_delay)),
+         'reserva:' || r.id || ':cobro_pendiente'
+  from public.reservas r
+  join public.clientes c on c.id = r.cliente_id
+  left join public.pagos p on p.reserva_id = r.id
+  where r.estado = 'finalizada' and r.fecha_salida is not null and r.fecha_salida >= local_today - 30
+    and (((r.fecha_salida + coalesce(r.hora_estimada_salida, time '12:00')) at time zone 'Europe/Madrid') + make_interval(hours => payment_delay)) >= p_now - interval '72 hours'
+  group by r.id, c.nombre
+  having r.total_final - coalesce(sum(p.importe) filter (where p.estado = 'confirmado'), 0) > 0
+  on conflict (dedupe_key) do update set scheduled_for = excluded.scheduled_for, cuerpo = excluded.cuerpo, updated_at = now()
+  where notificaciones_operativas.estado = 'pendiente' and notificaciones_operativas.snoozed_at is null;
+  get diagnostics row_count_value = row_count; affected := affected + row_count_value;
+
+  insert into public.notificaciones_operativas (reserva_id, recordatorio_cuidado_id, tipo, titulo, cuerpo, scheduled_for, dedupe_key)
+  select r.id, care.id, 'cuidado',
+         case care.tipo when 'medicacion' then 'Medicación de ' else 'Alimentación de ' end || dog.nombre,
+         care.descripcion,
+         ((care_day::date + care.hora) at time zone 'Europe/Madrid'),
+         'cuidado:' || care.id || ':' || care_day::date
+  from public.recordatorios_cuidado care
+  join public.reservas r on r.id = care.reserva_id
+  join public.perros dog on dog.id = care.perro_id
+  cross join lateral generate_series(
+    greatest(r.fecha_llegada, local_today)::timestamp,
+    least(coalesce(r.fecha_salida, r.fecha_llegada), local_today + 14)::timestamp,
+    interval '1 day'
+  ) care_day
+  where care.activo and r.estado in ('confirmada', 'en_curso')
+  on conflict (dedupe_key) do update set scheduled_for = excluded.scheduled_for, cuerpo = excluded.cuerpo, updated_at = now()
+  where notificaciones_operativas.estado = 'pendiente' and notificaciones_operativas.snoozed_at is null;
+  get diagnostics row_count_value = row_count; affected := affected + row_count_value;
+
+  update public.notificaciones_operativas n set estado = 'cancelada', updated_at = now()
+  from public.reservas r
+  where n.reserva_id = r.id and n.estado = 'pendiente' and (
+    r.estado = 'cancelada'
+    or (n.tipo like 'entrada%' and r.checkin_real_at is not null)
+    or (n.tipo like 'salida%' and r.checkout_real_at is not null)
+    or (n.tipo = 'checkin_atrasado' and r.checkin_real_at is not null)
+    or (n.tipo = 'checkout_atrasado' and r.checkout_real_at is not null)
+  );
+  update public.notificaciones_operativas
+  set estado = 'cancelada', updated_at = now()
+  where estado = 'pendiente' and sent_at is null and snoozed_at is null and (
+    (tipo in ('entrada_48h', 'entrada_dia', 'salida_48h', 'salida_dia') and scheduled_for < p_now - interval '2 hours')
+    or (tipo in ('checkin_atrasado', 'checkout_atrasado') and scheduled_for < p_now - interval '36 hours')
+    or (tipo = 'cobro_pendiente' and scheduled_for < p_now - interval '72 hours')
+  );
+  return affected;
+end;
+$$;
+
+create or replace function actuar_notificacion(p_notificacion_id uuid, p_accion text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  item public.notificaciones_operativas%rowtype;
+  outstanding numeric(10,2);
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  select * into item from public.notificaciones_operativas where id = p_notificacion_id for update;
+  if not found then raise exception 'La notificación no existe.'; end if;
+  if p_accion = 'posponer' then
+    update public.notificaciones_operativas
+    set estado = 'pendiente', sent_at = null, snoozed_at = now(),
+        scheduled_for = now() + case when item.tipo = 'cuidado' then interval '30 minutes' else interval '24 hours' end,
+        updated_at = now()
+    where id = item.id;
+  elsif p_accion = 'descartar' then
+    update public.notificaciones_operativas set estado = 'descartada', acted_at = now(), updated_at = now() where id = item.id;
+  elsif p_accion = 'confirmar_checkin' then
+    update public.reservas set estado = 'en_curso', checkin_real_at = coalesce(checkin_real_at, now()), updated_at = now()
+    where id = item.reserva_id and estado = 'confirmada';
+    if not found then raise exception 'La reserva ya no está lista para check-in.'; end if;
+    update public.notificaciones_operativas set estado = 'completada', acted_at = now(), updated_at = now() where id = item.id;
+  elsif p_accion = 'confirmar_checkout' then
+    update public.reservas set estado = 'finalizada', checkout_real_at = coalesce(checkout_real_at, now()), updated_at = now()
+    where id = item.reserva_id and estado = 'en_curso';
+    if not found then raise exception 'La reserva ya no está lista para check-out.'; end if;
+    update public.notificaciones_operativas set estado = 'completada', acted_at = now(), updated_at = now() where id = item.id;
+  elsif p_accion = 'marcar_cobrado' then
+    select greatest(r.total_final - coalesce(sum(p.importe) filter (where p.estado = 'confirmado'), 0), 0)
+    into outstanding
+    from public.reservas r left join public.pagos p on p.reserva_id = r.id
+    where r.id = item.reserva_id group by r.id;
+    if coalesce(outstanding, 0) <= 0 then raise exception 'La reserva ya no tiene saldo pendiente.'; end if;
+    insert into public.pagos (reserva_id, importe, metodo_pago, referencia, observaciones)
+    values (item.reserva_id, outstanding, 'otro', 'Notificación', 'Cobro confirmado desde recordatorio push');
+    update public.notificaciones_operativas set estado = 'completada', acted_at = now(), updated_at = now() where id = item.id;
+  else
+    raise exception 'Acción de notificación no permitida.';
+  end if;
+end;
+$$;
+
+create or replace function cancelar_reserva_con_aviso(p_reserva_id uuid)
+returns date[]
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  capacity integer := 4;
+  dog_count integer;
+  freed_dates date[] := array[]::date[];
+  reservation_row public.reservas%rowtype;
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  select * into reservation_row from public.reservas where id = p_reserva_id for update;
+  if not found or reservation_row.estado not in ('borrador', 'pendiente', 'confirmada') then
+    raise exception 'La reserva no se puede cancelar.';
+  end if;
+  select coalesce(valor, '4')::integer into capacity from public.configuracion where clave = 'capacidad_maxima_alojamiento';
+  select count(*) into dog_count from public.reserva_perros where reserva_id = p_reserva_id;
+
+  if reservation_row.fecha_llegada is not null and reservation_row.fecha_salida is not null then
+    select coalesce(array_agg(day_value order by day_value), array[]::date[]) into freed_dates
+    from (
+      select occupied_day::date as day_value
+      from generate_series(reservation_row.fecha_llegada::timestamp, (reservation_row.fecha_salida - 1)::timestamp, interval '1 day') occupied_day
+      where (
+        select count(*)
+        from public.reservas other_reservation
+        join public.reserva_perros other_dog on other_dog.reserva_id = other_reservation.id
+        join public.servicios service on service.id = other_reservation.servicio_id
+        where other_reservation.estado in ('pendiente', 'confirmada', 'en_curso')
+          and service.tipo_unidad_cobro = 'por_noche'
+          and other_reservation.fecha_llegada <= occupied_day::date
+          and other_reservation.fecha_salida > occupied_day::date
+      ) >= capacity
+      and (
+        select count(*)
+        from public.reservas other_reservation
+        join public.reserva_perros other_dog on other_dog.reserva_id = other_reservation.id
+        join public.servicios service on service.id = other_reservation.servicio_id
+        where other_reservation.id <> p_reserva_id
+          and other_reservation.estado in ('pendiente', 'confirmada', 'en_curso')
+          and service.tipo_unidad_cobro = 'por_noche'
+          and other_reservation.fecha_llegada <= occupied_day::date
+          and other_reservation.fecha_salida > occupied_day::date
+      ) < capacity
+    ) available_days;
+  end if;
+
+  update public.reservas set estado = 'cancelada', updated_at = now() where id = p_reserva_id;
+  update public.notificaciones_operativas set estado = 'cancelada', updated_at = now()
+  where reserva_id = p_reserva_id and estado = 'pendiente';
+
+  if cardinality(freed_dates) > 0 then
+    insert into public.notificaciones_operativas (reserva_id, tipo, titulo, cuerpo, scheduled_for, dedupe_key)
+    values (
+      p_reserva_id, 'hueco_liberado', 'Plazas disponibles tras una cancelación',
+      'Han quedado disponibles: ' || array_to_string(freed_dates, ', '), now(),
+      'reserva:' || p_reserva_id || ':hueco_liberado:' || extract(epoch from now())::bigint
+    );
+  end if;
+  return freed_dates;
+end;
+$$;
+
+revoke all on function ajustar_horario_notificacion(timestamptz) from public;
+revoke all on function programar_notificaciones_operativas(timestamptz) from public;
+revoke all on function actuar_notificacion(uuid, text) from public;
+revoke all on function cancelar_reserva_con_aviso(uuid) from public;
+grant execute on function ajustar_horario_notificacion(timestamptz) to authenticated;
+grant execute on function programar_notificaciones_operativas(timestamptz) to service_role;
+grant execute on function actuar_notificacion(uuid, text) to authenticated;
+grant execute on function cancelar_reserva_con_aviso(uuid) to authenticated;

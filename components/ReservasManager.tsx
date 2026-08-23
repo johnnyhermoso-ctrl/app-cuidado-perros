@@ -8,6 +8,7 @@ import { Cliente, Perro, Reserva, Servicio } from '@/lib/types';
 import { getReservationActions, getReservationTimestampUpdate, ReservationStatus } from '@/lib/reservation-state';
 import { StatusMessage } from './StatusMessage';
 import { holidaySurcharge, type Holiday } from '@/lib/holidays';
+import { capacityExceededDates } from '@/lib/capacity';
 
 type ReservaJoin = Reserva & {
   clientes?: Cliente;
@@ -52,14 +53,17 @@ export function ReservasManager() {
   const [graceHours, setGraceHours] = useState(2);
   const [daycareRate, setDaycareRate] = useState<ApplicableRate | null>(null);
   const [daycareRateLoading, setDaycareRateLoading] = useState(false);
+  const [maximumCapacity, setMaximumCapacity] = useState(4);
+  const [capacityAcknowledged, setCapacityAcknowledged] = useState(false);
 
   async function loadStaticData() {
-    const [{ data: clientesData, error: clientesError }, { data: serviciosData, error: serviciosError }, holidayData, holidayConfig, graceConfig] = await Promise.all([
+    const [{ data: clientesData, error: clientesError }, { data: serviciosData, error: serviciosError }, holidayData, holidayConfig, graceConfig, capacityConfig] = await Promise.all([
       supabase.from('clientes').select('*').eq('activo', true).order('nombre'),
       supabase.from('servicios').select('*').eq('activo', true).order('nombre'),
       supabase.from('festivos').select('fecha,activo').eq('activo', true),
       supabase.from('configuracion').select('valor').eq('clave', 'recargo_festivo_alojamiento').maybeSingle(),
       supabase.from('configuracion').select('valor').eq('clave', 'margen_cortesia_horas').maybeSingle(),
+      supabase.from('configuracion').select('valor').eq('clave', 'capacidad_maxima_alojamiento').maybeSingle(),
     ]);
 
     if (clientesError || serviciosError) {
@@ -70,6 +74,7 @@ export function ReservasManager() {
       setHolidays((holidayData.data ?? []) as Holiday[]);
       setHolidayAmount(Number(holidayConfig.data?.valor ?? 2));
       setGraceHours(Number(graceConfig.data?.valor ?? 2));
+      setMaximumCapacity(Number(capacityConfig.data?.valor ?? 4));
     }
   }
 
@@ -231,6 +236,16 @@ export function ReservasManager() {
   const holidayPreview = useMemo(() => selectedService?.tipo_unidad_cobro === 'por_noche' ? holidaySurcharge(form.fecha_llegada, form.fecha_salida, holidays, holidayAmount) : { dates: [], count: 0, total: 0 }, [selectedService, form.fecha_llegada, form.fecha_salida, holidays, holidayAmount]);
   const daycareApplies = selectedService?.tipo_unidad_cobro === 'por_noche' && exceedsCheckoutGrace(form.hora_estimada_llegada, form.hora_estimada_salida, graceHours);
   const daycarePreview = daycareApplies && daycareRate ? calculateSubtotal(daycareRate.price, 1, selectedDogIds.length) : 0;
+  const capacityConflicts = useMemo(
+    () => selectedService?.tipo_unidad_cobro === 'por_noche'
+      ? capacityExceededDates(reservas, form.fecha_llegada, form.fecha_salida, selectedDogIds.length, maximumCapacity, editingId)
+      : [],
+    [selectedService, reservas, form.fecha_llegada, form.fecha_salida, selectedDogIds.length, maximumCapacity, editingId]
+  );
+
+  useEffect(() => {
+    setCapacityAcknowledged(false);
+  }, [form.fecha_llegada, form.fecha_salida, selectedDogIds.length, editingId]);
 
   function toggleDog(id: string) {
     setSelectedDogIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
@@ -263,6 +278,10 @@ export function ReservasManager() {
       setMessage({ type: 'error', text: 'La salida supera el margen de cortesía, pero no existe una tarifa activa de guardería.' });
       return;
     }
+    if (capacityConflicts.length > 0 && !capacityAcknowledged) {
+      setMessage({ type: 'error', text: 'Revisa y acepta el aviso de capacidad antes de guardar la reserva.' });
+      return;
+    }
     setSaving(true);
     try {
       const numero_noches = selectedService?.tipo_unidad_cobro === 'por_noche' ? nights : 0;
@@ -277,14 +296,22 @@ export function ReservasManager() {
         p_fecha_salida: form.fecha_salida || null, p_hora_estimada_salida: form.hora_estimada_salida || null,
         p_observaciones: form.observaciones.trim() || null, p_numero_noches: numero_noches,
       };
-      const { error: reservaError } = await supabase.rpc(rpc, parameters);
+      const { data: reservationData, error: reservaError } = await supabase.rpc(rpc, parameters);
       if (reservaError) throw reservaError;
+      const savedReservationId = editingId || (reservationData as string | null);
+      if (savedReservationId) {
+        const { error: capacityError } = await supabase.from('reservas')
+          .update({ sobreocupacion_autorizada: capacityConflicts.length > 0 && capacityAcknowledged })
+          .eq('id', savedReservationId);
+        if (capacityError) throw capacityError;
+      }
 
       setForm(emptyForm);
       setEditingId(null);
       setFormOpen(false);
       setSelectedDogIds([]);
       setPerrosCliente([]);
+      setCapacityAcknowledged(false);
       setMessage({ type: 'success', text: editingId ? 'Reserva actualizada y recalculada correctamente.' : 'Reserva creada correctamente.' });
       await loadReservas();
     } catch (error: any) {
@@ -308,14 +335,14 @@ export function ReservasManager() {
     setUpdatingId(reservation.id);
     setMessage(null);
     const now = new Date().toISOString();
-    const { error } = await supabase
-      .from('reservas')
-      .update({ estado: nextStatus, ...getReservationTimestampUpdate(nextStatus, now) })
-      .eq('id', reservation.id);
+    const { data: freedDates, error } = nextStatus === 'cancelada'
+      ? await supabase.rpc('cancelar_reserva_con_aviso', { p_reserva_id: reservation.id })
+      : await supabase.from('reservas').update({ estado: nextStatus, ...getReservationTimestampUpdate(nextStatus, now) }).eq('id', reservation.id);
 
     if (error) setMessage({ type: 'error', text: error.message });
     else {
-      setMessage({ type: 'success', text: `Reserva actualizada a ${nextStatus.replace('_', ' ')}.` });
+      const released = Array.isArray(freedDates) && freedDates.length > 0 ? ` Se liberó capacidad los días: ${freedDates.join(', ')}.` : '';
+      setMessage({ type: 'success', text: `Reserva actualizada a ${nextStatus.replace('_', ' ')}.${released}` });
       await loadReservas();
     }
     setUpdatingId(null);
@@ -396,6 +423,14 @@ export function ReservasManager() {
             <p>Sugerencia larga estancia: {nights >= 15 ? 'Sí' : 'No'}</p>
             <p>Sugerencia segundo perro: {selectedDogIds.length > 1 ? 'Sí' : 'No'}</p>
           </div>
+          {capacityConflicts.length > 0 ? <div className="full capacityWarning">
+            <strong>La capacidad de {maximumCapacity} perros se supera</strong>
+            <p>Días afectados: {capacityConflicts.map((date) => formatDate(date)).join(', ')}.</p>
+            <label className="checkboxItem capacityConfirmation">
+              <input type="checkbox" checked={capacityAcknowledged} onChange={(event) => setCapacityAcknowledged(event.target.checked)} />
+              <span>He revisado la ocupación y deseo aceptar la reserva.</span>
+            </label>
+          </div> : null}
           <div className="full actionsRow">
             <button className="button primary" disabled={saving}>{saving ? 'Guardando...' : editingId ? 'Guardar y recalcular' : 'Guardar reserva'}</button>
             {editingId ? <button type="button" className="button secondary" onClick={() => { setEditingId(null); setForm(emptyForm); setSelectedDogIds([]); setFormOpen(false); }}>Cancelar edición</button> : null}
