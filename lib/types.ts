@@ -71,6 +71,8 @@ export type Reserva = {
   total_recargos: number | null;
   total_final: number | null;
   numero_festivos_detectados: number | null;
+  aplica_recargo_guarderia: boolean | null;
+  numero_guarderias_recargo: number | null;
   observaciones: string | null;
   created_at: string;
 };

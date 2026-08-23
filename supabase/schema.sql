@@ -467,6 +467,7 @@ begin
   select new_reserva_id, dog_id, dog_order::integer
   from unnest(p_perro_ids) with ordinality as dogs(dog_id, dog_order);
   perform public.aplicar_recargo_festivos(new_reserva_id);
+  perform public.aplicar_guarderia_por_exceso_horario(new_reserva_id);
   return new_reserva_id;
 end;
 $$;
@@ -680,6 +681,88 @@ $$;
 revoke all on function aplicar_recargo_festivos(uuid) from public;
 grant execute on function aplicar_recargo_festivos(uuid) to authenticated;
 
+-- Añade una guardería automática cuando el check-out supera el margen de cortesía.
+create or replace function aplicar_guarderia_por_exceso_horario(target_reserva_id uuid)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare
+  service_unit text;
+  customer_id uuid;
+  arrival_date date;
+  arrival_time time;
+  departure_time time;
+  grace_interval interval := interval '2 hours';
+  daycare_service_id uuid;
+  daycare_rate numeric(10,2);
+  dog_count integer := 0;
+begin
+  select s.tipo_unidad_cobro, r.cliente_id, r.fecha_llegada, r.hora_estimada_llegada, r.hora_estimada_salida
+  into service_unit, customer_id, arrival_date, arrival_time, departure_time
+  from public.reservas r
+  join public.servicios s on s.id = r.servicio_id
+  where r.id = target_reserva_id;
+
+  if not found then raise exception 'La reserva no existe.'; end if;
+
+  update public.ajustes_reserva
+  set estado = 'anulado', anulado_at = now(), anulado_por = (select auth.uid())
+  where reserva_id = target_reserva_id and modo = 'guarderia_horaria_automatica' and estado = 'activo';
+
+  update public.reservas
+  set aplica_recargo_guarderia = false, numero_guarderias_recargo = 0
+  where id = target_reserva_id;
+
+  select coalesce((select valor::numeric from public.configuracion where clave = 'margen_cortesia_horas'), 2) * interval '1 hour'
+  into grace_interval;
+
+  if service_unit <> 'por_noche' or arrival_time is null or departure_time is null
+     or departure_time - arrival_time <= grace_interval then
+    perform public.recalcular_total_reserva(target_reserva_id);
+    return;
+  end if;
+
+  select id into daycare_service_id from public.servicios
+  where codigo = 'guarderia' and activo limit 1;
+  if daycare_service_id is null then raise exception 'No existe un servicio de guardería activo.'; end if;
+
+  select count(*) into dog_count from public.reserva_perros where reserva_id = target_reserva_id;
+  if dog_count = 0 then raise exception 'La reserva no tiene perros asociados.'; end if;
+
+  select precio_especial into daycare_rate
+  from public.tarifas_especiales_cliente
+  where cliente_id = customer_id and servicio_id = daycare_service_id and activa
+    and (vigencia_desde is null or vigencia_desde <= arrival_date)
+    and (vigencia_hasta is null or vigencia_hasta >= arrival_date)
+  order by vigencia_desde desc nulls last, created_at desc limit 1;
+
+  if not found then
+    select precio_base into daycare_rate from public.tarifas_generales
+    where servicio_id = daycare_service_id and activa
+      and (vigencia_desde is null or vigencia_desde <= arrival_date)
+      and (vigencia_hasta is null or vigencia_hasta >= arrival_date)
+    order by vigencia_desde desc nulls last, created_at desc limit 1;
+  end if;
+  if daycare_rate is null then raise exception 'No existe una tarifa activa de guardería para la fecha seleccionada.'; end if;
+
+  insert into public.ajustes_reserva (reserva_id, tipo, concepto, modo, importe, cantidad, descripcion)
+  values (
+    target_reserva_id, 'recargo', 'Guardería adicional por exceso horario', 'guarderia_horaria_automatica',
+    round(daycare_rate * dog_count, 2), 1,
+    concat('1 guardería × ', dog_count, ' perro(s) × ', daycare_rate, ' €; margen de cortesía ', extract(epoch from grace_interval) / 3600, ' h')
+  );
+
+  update public.reservas
+  set aplica_recargo_guarderia = true, numero_guarderias_recargo = 1
+  where id = target_reserva_id;
+  perform public.recalcular_total_reserva(target_reserva_id);
+end;
+$$;
+
+revoke all on function aplicar_guarderia_por_exceso_horario(uuid) from public;
+grant execute on function aplicar_guarderia_por_exceso_horario(uuid) to authenticated;
+
 -- Edita una reserva abierta y recalcula tarifa, perros y recargos de forma atómica.
 create or replace function actualizar_reserva(
   p_reserva_id uuid,
@@ -750,6 +833,7 @@ begin
   insert into public.reserva_perros (reserva_id, perro_id, orden_en_reserva)
   select p_reserva_id, dog_id, dog_order::integer from unnest(p_perro_ids) with ordinality as dogs(dog_id, dog_order);
   perform public.aplicar_recargo_festivos(p_reserva_id);
+  perform public.aplicar_guarderia_por_exceso_horario(p_reserva_id);
 
   select coalesce(sum(importe) filter (where estado = 'confirmado'), 0) into paid_total from public.pagos where reserva_id = p_reserva_id;
   select total_final into new_total from public.reservas where id = p_reserva_id;

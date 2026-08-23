@@ -36,6 +36,20 @@ export function calculateSubtotal(rate: number, units: number, numberOfDogs: num
   return Math.round(rate * units * numberOfDogs * 100) / 100;
 }
 
+function timeToMinutes(value?: string | null) {
+  if (!value) return null;
+  const [hours, minutes] = value.slice(0, 5).split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+export function exceedsCheckoutGrace(arrivalTime?: string | null, departureTime?: string | null, graceHours = 2) {
+  const arrival = timeToMinutes(arrivalTime);
+  const departure = timeToMinutes(departureTime);
+  if (arrival === null || departure === null || graceHours < 0) return false;
+  return departure - arrival > graceHours * 60;
+}
+
 export function calculateBalance(total: number, payments: number[]) {
   return Math.round((total - payments.reduce((sum, payment) => sum + payment, 0)) * 100) / 100;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateBalance, calculateBillableUnits, calculateNights, calculateSubtotal, formatCurrency, formatDate, isValidDateRange } from './utils';
+import { calculateBalance, calculateBillableUnits, calculateNights, calculateSubtotal, exceedsCheckoutGrace, formatCurrency, formatDate, isValidDateRange } from './utils';
 
 describe('calculateNights', () => {
   it('calcula noches sin verse afectado por el cambio horario', () => {
@@ -43,5 +43,21 @@ describe('tarifas', () => {
   it('calcula saldo con pagos parciales y saldo a favor', () => {
     expect(calculateBalance(100, [20, 30])).toBe(50);
     expect(calculateBalance(40, [50])).toBe(-10);
+  });
+});
+
+describe('margen de cortesía de salida', () => {
+  it('no añade guardería cuando la salida está dentro de dos horas o justo en el límite', () => {
+    expect(exceedsCheckoutGrace('10:00', '11:59', 2)).toBe(false);
+    expect(exceedsCheckoutGrace('10:00', '12:00', 2)).toBe(false);
+  });
+
+  it('añade guardería cuando la salida supera el margen configurable', () => {
+    expect(exceedsCheckoutGrace('10:00', '12:01', 2)).toBe(true);
+    expect(exceedsCheckoutGrace('10:00', '11:01', 1)).toBe(true);
+  });
+
+  it('no considera exceso una salida matinal posterior a una entrada vespertina', () => {
+    expect(exceedsCheckoutGrace('18:00', '10:00', 2)).toBe(false);
   });
 });
