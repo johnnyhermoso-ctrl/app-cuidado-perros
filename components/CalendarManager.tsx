@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { CalendarReservation, getDaySummary, getMonthGrid } from '@/lib/calendar';
+import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
 import { StatusMessage } from './StatusMessage';
 
 type ReservationJoin = CalendarReservation & {
@@ -97,25 +98,34 @@ export function CalendarManager() {
           <div className="calendarGrid calendarDays">
             {days.map((day) => {
               const summary = getDaySummary(reservations, day.date);
+              const dogCount = (items: CalendarReservation[]) => items.reduce(
+                (total, reservation) => total + ((reservation as ReservationJoin).reserva_perros?.length ?? 0),
+                0
+              );
+              const occupiedDogs = dogCount(summary.reservations);
+              const arrivingDogs = dogCount(summary.reservations.filter((reservation) => reservation.fecha_llegada === day.date));
+              const departingDogs = dogCount(summary.reservations.filter((reservation) => reservation.fecha_salida === day.date));
               return (
                 <article key={day.date} className={`calendarDay ${day.inCurrentMonth ? '' : 'calendarDayOutside'}`}>
                   <div className="calendarDayHeader">
                     <strong>{day.dayNumber}</strong>
-                    {summary.occupied > 0 ? <span className="calendarOccupancy">{summary.occupied} reserva{summary.occupied === 1 ? '' : 's'}</span> : null}
+                    {occupiedDogs > 0 ? <span className="calendarOccupancy">{occupiedDogs} perro{occupiedDogs === 1 ? '' : 's'}</span> : null}
                   </div>
-                  {(summary.arrivals > 0 || summary.departures > 0) ? (
+                  {(arrivingDogs > 0 || departingDogs > 0) ? (
                     <div className="calendarMovement">
-                      {summary.arrivals > 0 ? <span>↓ {summary.arrivals} entrada{summary.arrivals === 1 ? '' : 's'}</span> : null}
-                      {summary.departures > 0 ? <span>↑ {summary.departures} salida{summary.departures === 1 ? '' : 's'}</span> : null}
+                      {arrivingDogs > 0 ? <span>↓ {arrivingDogs} entrada{arrivingDogs === 1 ? '' : 's'}</span> : null}
+                      {departingDogs > 0 ? <span>↑ {departingDogs} salida{departingDogs === 1 ? '' : 's'}</span> : null}
                     </div>
                   ) : null}
                   <div className="calendarBookings">
                     {summary.reservations.slice(0, 3).map((reservation) => {
                       const joined = reservation as ReservationJoin;
-                      const dogs = joined.reserva_perros?.map((item) => item.perros?.nombre).filter(Boolean).join(', ');
+                      const dogs = reservationDogNames(joined);
+                      const owner = reservationOwnerName(joined);
                       return (
-                        <Link href={`/reservas/?reserva=${reservation.id}`} className={`calendarBooking ${bookingColor(reservation.id)}`} key={reservation.id} title={`Abrir reserva de ${joined.clientes?.nombre || 'Cliente'} · ${joined.servicios?.nombre || 'Servicio'}`}>
-                          <strong>{dogs || joined.clientes?.nombre || 'Reserva'}</strong>
+                        <Link href={`/reservas/?reserva=${reservation.id}`} className={`calendarBooking ${bookingColor(reservation.id)}`} key={reservation.id} title={`Abrir reserva de ${dogs} · Dueño: ${owner} · ${joined.servicios?.nombre || 'Servicio'}`}>
+                          <strong>{dogs}</strong>
+                          <span>Dueño: {owner}</span>
                           <span>{joined.servicios?.nombre || 'Servicio'} · {joined.estado}</span>
                         </Link>
                       );
