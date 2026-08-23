@@ -2,6 +2,11 @@ name: Desplegar función push
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - '.github/workflows/deploy-push-function.yml'
 
 permissions:
   contents: read
@@ -22,3 +27,11 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: supabase functions deploy push-test --project-ref rdloepwizihknywifhet --use-api
+
+      - name: Desplegar notificaciones operativas
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          NOTIFICATION_CRON_SECRET: ${{ secrets.NOTIFICATION_CRON_SECRET }}
+        run: |
+          supabase secrets set NOTIFICATION_CRON_SECRET="$NOTIFICATION_CRON_SECRET" --project-ref rdloepwizihknywifhet
+          supabase functions deploy notification-dispatch --project-ref rdloepwizihknywifhet --use-api --no-verify-jwt

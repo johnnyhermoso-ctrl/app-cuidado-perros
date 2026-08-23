@@ -8,14 +8,19 @@ self.addEventListener('push', (event) => {
     badge: '/app-icon.svg',
     tag: data.tag || 'perros-app',
     renotify: Boolean(data.renotify),
-    data: { url: data.url || '/' },
+    actions: Array.isArray(data.actions) ? data.actions.map(({ action, title }) => ({ action, title })) : [],
+    data: {
+      url: data.url || '/',
+      actionUrls: Object.fromEntries((data.actions || []).map(({ action, url }) => [action, url])),
+    },
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const destination = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  const selectedActionUrl = event.action ? event.notification.data?.actionUrls?.[event.action] : null;
+  const destination = new URL(selectedActionUrl || event.notification.data?.url || '/', self.location.origin).href;
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       const existing = clients.find((client) => client.url.startsWith(self.location.origin));

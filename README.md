@@ -16,6 +16,8 @@ La aplicación incluye:
 - selección de tarifa vigente y cálculo provisional al crear reservas;
 - tarifas especiales por cliente;
 - descuentos, recargos, pagos parciales y saldo pendiente;
+- avisos push programados para entradas, salidas, cuidados, cobros y confirmaciones atrasadas;
+- alerta informativa de capacidad con detalle de las noches afectadas;
 - anulación trazable de movimientos económicos;
 - esquema inicial para tarifas, pagos, festivos y recurrencias.
 
