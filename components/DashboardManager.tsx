@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { buildOperationalMetrics, reservationBalance, type DashboardReservation } from '@/lib/dashboard';
+import { buildMonthlyForecast, buildOperationalMetrics, reservationBalance, type DashboardReservation } from '@/lib/dashboard';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
 import { StatusMessage } from './StatusMessage';
@@ -25,6 +25,12 @@ function monthBounds(today: string) {
   return { start: `${year}-${String(month).padStart(2, '0')}-01`, next: new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10) };
 }
 
+function forecastMonthLabel(month: string) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const label = new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(new Date(year, monthNumber - 1, 1));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 export function DashboardManager() {
   const [counts, setCounts] = useState({ clientes: 0, perros: 0 });
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -32,6 +38,8 @@ export function DashboardManager() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(localDate, []);
+  const currentMonth = today.slice(0, 7);
+  const [forecastStart, setForecastStart] = useState(currentMonth);
 
   useEffect(() => {
     async function loadDashboard() {
@@ -57,6 +65,7 @@ export function DashboardManager() {
   const metrics = useMemo(() => buildOperationalMetrics(bookings, today), [bookings, today]);
   const upcoming = useMemo(() => bookings.filter((booking) => booking.fecha_llegada && booking.fecha_llegada >= today && ['pendiente', 'confirmada'].includes(booking.estado)).slice(0, 6), [bookings, today]);
   const pendingPayments = useMemo(() => bookings.filter((booking) => reservationBalance(booking) > 0).sort((a, b) => reservationBalance(b) - reservationBalance(a)).slice(0, 5), [bookings]);
+  const monthlyForecast = useMemo(() => buildMonthlyForecast(bookings, forecastStart), [bookings, forecastStart]);
 
   if (loading) return <p>Cargando resumen…</p>;
   if (error) return <StatusMessage type="error" message={`No se pudo cargar el resumen: ${error}`} />;
@@ -80,6 +89,31 @@ export function DashboardManager() {
         <MiniMetric label="Clientes activos" value={String(counts.clientes)} />
         <MiniMetric label="Perros activos" value={String(counts.perros)} />
       </div>
+      <section className="card monthlyForecast">
+        <div className="forecastHeader">
+          <div>
+            <h2>Previsión mensual</h2>
+            <p className="muted">Importes de las reservas agrupados por mes de entrada.</p>
+          </div>
+          <div className="forecastFilter">
+            <label>Consultar desde
+              <input type="month" min={currentMonth} value={forecastStart} onChange={(event) => setForecastStart(event.target.value || currentMonth)} />
+            </label>
+            {forecastStart !== currentMonth ? <button type="button" className="button secondary" onClick={() => setForecastStart(currentMonth)}>Próximos 3 meses</button> : null}
+          </div>
+        </div>
+        <div className="forecastGrid">
+          {monthlyForecast.map((month) => (
+            <article className="forecastMonth" key={month.month}>
+              <span className="forecastMonthLabel">{forecastMonthLabel(month.month)}</span>
+              <strong className="forecastTotal">{formatCurrency(month.projected)}</strong>
+              <small>{month.reservations} reserva{month.reservations === 1 ? '' : 's'} · {month.dogs} perro{month.dogs === 1 ? '' : 's'}</small>
+              <div className="forecastBreakdown"><span>Cobrado</span><strong>{formatCurrency(month.paid)}</strong></div>
+              <div className="forecastBreakdown"><span>Pendiente</span><strong>{formatCurrency(month.outstanding)}</strong></div>
+            </article>
+          ))}
+        </div>
+      </section>
       <div className="grid twoCols dashboardColumns">
         <section className="card">
           <div className="cardHeaderInline"><h2>Próximas reservas</h2><Link className="textButton" href="/calendario/">Calendario</Link></div>

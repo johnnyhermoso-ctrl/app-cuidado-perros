@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getDaySummary, getMonthGrid, reservationOccupiesDay, toDateKey } from './calendar';
+import { buildReservationHueMap, getDaySummary, getMonthGrid, reservationOccupiesDay, toDateKey } from './calendar';
 
 const reservation = {
   id: 'r1',
@@ -34,5 +34,15 @@ describe('calendar helpers', () => {
   it('counts arrivals, departures and occupied reservations', () => {
     const second = { ...reservation, id: 'r2', fecha_llegada: '2026-08-08', fecha_salida: '2026-08-10' };
     expect(getDaySummary([reservation, second], '2026-08-10')).toMatchObject({ arrivals: 1, departures: 1, occupied: 2 });
+  });
+
+  it('assigns a stable and distinct hue to every visible reservation', () => {
+    const ids = ['reserva-3', 'reserva-1', 'reserva-2', 'reserva-4'];
+    const first = buildReservationHueMap(ids);
+    const reordered = buildReservationHueMap([...ids].reverse());
+    const hues = ids.map((id) => first.get(id));
+
+    expect(new Set(hues).size).toBe(ids.length);
+    ids.forEach((id) => expect(reordered.get(id)).toBe(first.get(id)));
   });
 });
