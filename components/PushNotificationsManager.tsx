@@ -26,7 +26,7 @@ type CareReminder = {
   hora: string;
   activo: boolean;
   perros?: { nombre: string } | null;
-  reservas?: { clientes?: { nombre: string } | null } | null;
+  reservas?: { clientes?: { nombre: string; apellidos?: string | null } | null } | null;
 };
 type CareDog = { id: string; nombre: string; medicacion: string | null; alimentacion: string | null };
 type CareReservation = {
@@ -79,7 +79,7 @@ export function PushNotificationsManager() {
   const loadOperationalData = useCallback(async () => {
     const [notificationResult, careResult, reservationResult, configResult] = await Promise.all([
       supabase.from('notificaciones_operativas').select('id,reserva_id,tipo,titulo,cuerpo,scheduled_for,estado').order('scheduled_for', { ascending: false }).limit(30),
-      supabase.from('recordatorios_cuidado').select('*,perros(nombre),reservas(clientes(nombre))').order('hora'),
+      supabase.from('recordatorios_cuidado').select('*,perros(nombre),reservas(clientes(nombre,apellidos))').order('hora'),
       supabase.from('reservas').select('id,fecha_llegada,fecha_salida,clientes(nombre,apellidos),reserva_perros(perros(id,nombre,medicacion,alimentacion))').in('estado', ['confirmada', 'en_curso']).order('fecha_llegada'),
       supabase.from('configuracion').select('clave,valor').in('clave', Object.values(configKeys)),
     ]);
@@ -282,7 +282,7 @@ export function PushNotificationsManager() {
             <label>Indicaciones<textarea rows={3} value={careForm.descripcion} onChange={(event) => setCareForm({ ...careForm, descripcion: event.target.value })} /></label>
             <button className="button primary" disabled={busy}>Añadir recordatorio</button>
           </form>
-          <div className="listStack sectionSpacing">{careReminders.map((item) => <article className={`listItem ${item.activo ? '' : 'inactiveItem'}`} key={item.id}><div><strong>{item.hora.slice(0, 5)} · {item.perros?.nombre || 'Perro'}</strong><p>{item.descripcion}</p><small>{item.tipo} · {item.reservas?.clientes?.nombre || 'Reserva'}</small></div>{item.activo ? <button className="textButton dangerTextButton" disabled={busy} onClick={() => disableCareReminder(item.id)}>Desactivar</button> : null}</article>)}</div>
+          <div className="listStack sectionSpacing">{careReminders.map((item) => <article className={`listItem ${item.activo ? '' : 'inactiveItem'}`} key={item.id}><div><strong>{item.hora.slice(0, 5)} · {item.perros?.nombre || 'Perro'}</strong><p>{item.descripcion}</p><small>{item.tipo} · Dueño: {reservationOwnerName({ clientes: item.reservas?.clientes })}</small></div>{item.activo ? <button className="textButton dangerTextButton" disabled={busy} onClick={() => disableCareReminder(item.id)}>Desactivar</button> : null}</article>)}</div>
         </section>
 
         <section className="card">
