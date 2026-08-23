@@ -28,3 +28,30 @@ export function buildOperationalMetrics(reservations: DashboardReservation[], to
     outstanding: active.reduce((total, reservation) => total + reservationBalance(reservation), 0),
   };
 }
+
+function monthAtOffset(startMonth: string, offset: number) {
+  const [year, month] = startMonth.split('-').map(Number);
+  const date = new Date(year, month - 1 + offset, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function buildMonthlyForecast(reservations: DashboardReservation[], startMonth: string, count = 3) {
+  return Array.from({ length: count }, (_, index) => {
+    const month = monthAtOffset(startMonth, index);
+    const monthReservations = reservations.filter((reservation) =>
+      reservation.estado !== 'cancelada' && reservation.fecha_llegada?.startsWith(month)
+    );
+
+    const projected = monthReservations.reduce((total, reservation) => total + Number(reservation.total_final ?? 0), 0);
+    const paid = monthReservations.reduce((total, reservation) => total + confirmedPaid(reservation), 0);
+
+    return {
+      month,
+      projected: Math.round(projected * 100) / 100,
+      paid: Math.round(paid * 100) / 100,
+      outstanding: Math.max(0, Math.round((projected - paid) * 100) / 100),
+      reservations: monthReservations.length,
+      dogs: monthReservations.reduce((total, reservation) => total + (reservation.reserva_perros?.length ?? 0), 0),
+    };
+  });
+}

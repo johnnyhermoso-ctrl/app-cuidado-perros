@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
-import { CalendarReservation, getDaySummary, getMonthGrid } from '@/lib/calendar';
+import { buildReservationHueMap, CalendarReservation, getDaySummary, getMonthGrid } from '@/lib/calendar';
 import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
 import { StatusMessage } from './StatusMessage';
 
@@ -22,11 +22,6 @@ function monthLabel(date: Date) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-function bookingColor(id: string) {
-  const index = Array.from(id).reduce((total, character) => total + character.charCodeAt(0), 0) % 5;
-  return `calendarBookingColor${index + 1}`;
-}
-
 export function CalendarManager() {
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const now = new Date();
@@ -39,6 +34,10 @@ export function CalendarManager() {
   const days = useMemo(
     () => getMonthGrid(visibleMonth.getFullYear(), visibleMonth.getMonth()),
     [visibleMonth]
+  );
+  const reservationHues = useMemo(
+    () => buildReservationHueMap(reservations.map((reservation) => reservation.id)),
+    [reservations]
   );
 
   useEffect(() => {
@@ -109,7 +108,7 @@ export function CalendarManager() {
                 <article key={day.date} className={`calendarDay ${day.inCurrentMonth ? '' : 'calendarDayOutside'}`}>
                   <div className="calendarDayHeader">
                     <strong>{day.dayNumber}</strong>
-                    {occupiedDogs > 0 ? <span className="calendarOccupancy">{occupiedDogs} perro{occupiedDogs === 1 ? '' : 's'}</span> : null}
+                    {occupiedDogs > 0 ? <span className="calendarOccupancy" aria-label={`${occupiedDogs} perro${occupiedDogs === 1 ? '' : 's'}`}><span>{occupiedDogs}</span><span className="calendarOccupancyLabel"> perro{occupiedDogs === 1 ? '' : 's'}</span></span> : null}
                   </div>
                   {(arrivingDogs > 0 || departingDogs > 0) ? (
                     <div className="calendarMovement">
@@ -122,8 +121,15 @@ export function CalendarManager() {
                       const joined = reservation as ReservationJoin;
                       const dogs = reservationDogNames(joined);
                       const owner = reservationOwnerName(joined);
+                      const hue = reservationHues.get(reservation.id) ?? 220;
                       return (
-                        <Link href={`/reservas/?reserva=${reservation.id}`} className={`calendarBooking ${bookingColor(reservation.id)}`} key={reservation.id} title={`Abrir reserva de ${dogs} · Dueño: ${owner} · ${joined.servicios?.nombre || 'Servicio'}`}>
+                        <Link
+                          href={`/reservas/?reserva=${reservation.id}`}
+                          className="calendarBooking"
+                          key={reservation.id}
+                          title={`Abrir reserva de ${dogs} · Dueño: ${owner} · ${joined.servicios?.nombre || 'Servicio'}`}
+                          style={{ backgroundColor: `hsl(${hue} 78% 95%)`, borderLeftColor: `hsl(${hue} 68% 42%)`, color: `hsl(${hue} 62% 30%)` }}
+                        >
                           <strong>{dogs}</strong>
                           <span>Dueño: {owner}</span>
                           <span>{joined.servicios?.nombre || 'Servicio'} · {joined.estado}</span>

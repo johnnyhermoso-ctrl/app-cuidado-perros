@@ -45,3 +45,21 @@ export function getDaySummary(reservations: CalendarReservation[], date: string)
     occupied: active.length,
   };
 }
+
+function reservationHash(id: string) {
+  return Array.from(id).reduce((hash, character) => Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0, 2166136261);
+}
+
+export function buildReservationHueMap(ids: string[]) {
+  const hues = new Map<string, number>();
+  const used = new Set<number>();
+
+  Array.from(new Set(ids)).sort().forEach((id) => {
+    let hue = reservationHash(id) % 360;
+    while (used.has(hue)) hue = (hue + 137) % 360;
+    used.add(hue);
+    hues.set(id, hue);
+  });
+
+  return hues;
+}
