@@ -67,6 +67,10 @@ export function DashboardManager() {
   const pendingPayments = useMemo(() => bookings.filter((booking) => reservationBalance(booking) > 0).sort((a, b) => reservationBalance(b) - reservationBalance(a)).slice(0, 5), [bookings]);
   const monthlyForecast = useMemo(() => buildMonthlyForecast(bookings, forecastStart), [bookings, forecastStart]);
 
+  function updateForecastStart(value: string) {
+    setForecastStart(value || currentMonth);
+  }
+
   if (loading) return <p>Cargando resumen…</p>;
   if (error) return <StatusMessage type="error" message={`No se pudo cargar el resumen: ${error}`} />;
 
@@ -97,7 +101,7 @@ export function DashboardManager() {
           </div>
           <div className="forecastFilter">
             <label>Consultar desde
-              <input type="month" min={currentMonth} value={forecastStart} onChange={(event) => setForecastStart(event.target.value || currentMonth)} />
+              <input type="month" min={currentMonth} value={forecastStart} onInput={(event) => updateForecastStart(event.currentTarget.value)} onChange={(event) => updateForecastStart(event.target.value)} />
             </label>
             {forecastStart !== currentMonth ? <button type="button" className="button secondary" onClick={() => setForecastStart(currentMonth)}>Próximos 3 meses</button> : null}
           </div>
