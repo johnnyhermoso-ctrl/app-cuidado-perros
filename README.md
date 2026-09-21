@@ -19,9 +19,13 @@ La aplicación incluye:
 - avisos push programados para entradas, salidas, cuidados, cobros y confirmaciones atrasadas;
 - alerta informativa de capacidad con detalle de las noches afectadas;
 - anulación trazable de movimientos económicos;
-- esquema inicial para tarifas, pagos, festivos y recurrencias.
+- calendario mensual adaptable a móvil y control de capacidad;
+- check-in/check-out y edición de reservas;
+- planes recurrentes diarios, semanales o cada dos semanas;
+- varios turnos diarios, generación automática a tres meses y omisión/restauración individual;
+- esquema operativo para tarifas, pagos y festivos.
 
-El calendario, la capacidad, el check-in/check-out y las recurrencias todavía no están implementados en la interfaz.
+Cada ocurrencia recurrente se materializa como una reserva normal, por lo que utiliza el calendario, las tarifas, los cobros y las notificaciones existentes.
 
 El subtotal inicial de una reserva se calcula como `tarifa × unidades × número de perros`. La reserva conserva una copia de la tarifa y su origen para que futuras modificaciones no alteren el histórico.
 

@@ -15,6 +15,7 @@ export default function HomePage() {
           <Link className="quickLink" href="/clientes">Gestionar clientes</Link>
           <Link className="quickLink" href="/perros">Gestionar perros</Link>
           <Link className="quickLink" href="/reservas">Crear reservas</Link>
+          <Link className="quickLink" href="/recurrencias">Programar paseos recurrentes</Link>
         </div>
       </section>
     </div>

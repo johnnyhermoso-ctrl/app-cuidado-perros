@@ -55,6 +55,9 @@ Comprueba en este orden:
 5. Puede crear una reserva con uno o varios perros.
 6. Fechas inválidas son rechazadas.
 7. Al recargar, los datos permanecen.
+8. Puede crear una recurrencia de lunes a viernes con varios turnos.
+9. Los paseos recurrentes aparecen en Reservas y Calendario con el indicador `🔁`.
+10. Omitir y restaurar una ocurrencia no modifica el resto de la serie.
 
 No introduzcas datos reales hasta completar estas comprobaciones.
 

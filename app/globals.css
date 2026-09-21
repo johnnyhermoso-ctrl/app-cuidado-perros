@@ -151,6 +151,34 @@ textarea { resize: vertical; }
 .calendarBooking:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(16, 24, 40, 0.12); }
 .calendarBooking strong, .calendarBooking span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .calendarBooking span { color: #475467; }
+.recurrenceLayout { gap: 20px; }
+.recurrenceForm { display: grid; gap: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+.weekdaySelector { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.weekday { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 999px; background: white; cursor: pointer; }
+.weekday.active { border-color: var(--primary); background: #eff4ff; color: var(--primary-dark); }
+.weekday input { accent-color: var(--primary); }
+.turnHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
+.turnHeader h3, .turnHeader p { margin: 0; }
+.turnHeader p { margin-top: 4px; }
+.turnList { display: grid; gap: 10px; }
+.turnRow { display: grid; grid-template-columns: 1.4fr 1fr 1fr auto; gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: #f8fafc; }
+.turnRow .textButton { margin-bottom: 11px; }
+.recurrencePreview { display: grid; gap: 5px; padding: 14px; border: 1px dashed #84adff; border-radius: 14px; background: #f5f8ff; }
+.recurrencePreview small { color: var(--muted); }
+.recurrenceSeriesList { display: grid; gap: 14px; }
+.recurrenceSeries { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; }
+.recurrenceSeriesHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.recurrenceSeriesHeader p, .recurrenceSeriesHeader small { display: block; margin: 5px 0 0; color: var(--muted); }
+.seriesTitle { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.turnPills { display: flex; flex-wrap: wrap; gap: 7px; }
+.occurrenceDetails { border-top: 1px solid var(--border); padding-top: 12px; }
+.occurrenceDetails summary { color: var(--primary-dark); font-weight: 700; cursor: pointer; }
+.occurrenceList { display: grid; gap: 7px; margin-top: 12px; }
+.occurrenceRow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 11px; border-radius: 10px; background: #f8fafc; }
+.occurrenceRow small { display: block; margin-top: 3px; color: var(--muted); }
+.occurrenceRow.omitted { background: #fff7ed; opacity: 0.78; }
+.occurrenceRow.omitted strong { text-decoration: line-through; }
+.occurrenceActions { display: flex; gap: 12px; flex-shrink: 0; }
 
 @media (max-width: 980px) {
   .shell { grid-template-columns: 1fr; }
@@ -174,6 +202,9 @@ textarea { resize: vertical; }
   .forecastMonth { padding: 12px; }
   .forecastTotal { font-size: 1.25rem; }
   .forecastBreakdown { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .turnRow { grid-template-columns: 1fr 1fr 1fr; }
+  .turnRow label:first-child { grid-column: 1 / -1; }
+  .turnRow .textButton { grid-column: 1 / -1; justify-self: start; margin: 0; }
 }
 
 @media (max-width: 640px) {
@@ -201,4 +232,8 @@ textarea { resize: vertical; }
   .forecastMonth { grid-template-columns: 1fr auto; align-items: center; }
   .forecastMonth small { grid-column: 1 / -1; }
   .forecastBreakdown { flex-direction: row; grid-column: 1 / -1; }
+  .turnHeader, .recurrenceSeriesHeader, .occurrenceRow { align-items: stretch; flex-direction: column; }
+  .turnRow { grid-template-columns: 1fr 1fr; }
+  .turnRow label:first-child { grid-column: 1 / -1; }
+  .occurrenceActions { justify-content: flex-start; }
 }

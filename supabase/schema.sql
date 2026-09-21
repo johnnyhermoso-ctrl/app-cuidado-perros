@@ -1174,3 +1174,391 @@ grant execute on function ajustar_horario_notificacion(timestamptz) to authentic
 grant execute on function programar_notificaciones_operativas(timestamptz) to service_role;
 grant execute on function actuar_notificacion(uuid, text) to authenticated;
 grant execute on function cancelar_reserva_con_aviso(uuid) to authenticated;
+
+-- Evolución de recurrencias: varios turnos al día, reservas materializadas y omisiones individuales.
+alter table public.series_recurrentes add column if not exists nombre text;
+alter table public.series_recurrentes add column if not exists dias_semana_iso smallint[] not null default array[1,2,3,4,5]::smallint[];
+alter table public.series_recurrentes add column if not exists estado text not null default 'activa';
+alter table public.series_recurrentes add column if not exists observaciones text;
+alter table public.series_recurrentes add column if not exists materializada_hasta date;
+
+alter table public.series_recurrentes drop constraint if exists series_recurrentes_frecuencia_check;
+alter table public.series_recurrentes add constraint series_recurrentes_frecuencia_check
+check (frecuencia in ('diaria', 'semanal', 'cada_2_semanas'));
+alter table public.series_recurrentes drop constraint if exists series_recurrentes_estado_check;
+alter table public.series_recurrentes add constraint series_recurrentes_estado_check
+check (estado in ('activa', 'finalizada'));
+alter table public.series_recurrentes drop constraint if exists series_recurrentes_dias_check;
+alter table public.series_recurrentes add constraint series_recurrentes_dias_check
+check (cardinality(dias_semana_iso) > 0 and dias_semana_iso <@ array[1,2,3,4,5,6,7]::smallint[]);
+alter table public.series_recurrentes drop constraint if exists series_recurrentes_fechas_check;
+alter table public.series_recurrentes add constraint series_recurrentes_fechas_check
+check (fecha_fin is null or fecha_fin >= fecha_inicio);
+
+create table if not exists public.serie_recurrente_perros (
+  id uuid primary key default gen_random_uuid(),
+  serie_id uuid not null references public.series_recurrentes(id) on delete cascade,
+  perro_id uuid not null references public.perros(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  unique (serie_id, perro_id)
+);
+
+create table if not exists public.turnos_recurrentes (
+  id uuid primary key default gen_random_uuid(),
+  serie_id uuid not null references public.series_recurrentes(id) on delete cascade,
+  nombre text not null,
+  hora_inicio time not null,
+  hora_fin time,
+  orden integer not null default 1,
+  activo boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (hora_fin is null or hora_fin > hora_inicio)
+);
+
+alter table public.ocurrencias_recurrentes add column if not exists turno_id uuid references public.turnos_recurrentes(id) on delete cascade;
+alter table public.ocurrencias_recurrentes add column if not exists omitida boolean not null default false;
+alter table public.ocurrencias_recurrentes add column if not exists motivo_omision text;
+alter table public.ocurrencias_recurrentes add column if not exists updated_at timestamptz not null default now();
+alter table public.ocurrencias_recurrentes drop constraint if exists ocurrencias_recurrentes_serie_id_fecha_key;
+alter table public.ocurrencias_recurrentes drop constraint if exists ocurrencias_recurrentes_serie_fecha_key;
+alter table public.ocurrencias_recurrentes drop constraint if exists ocurrencias_recurrentes_estado_check;
+alter table public.ocurrencias_recurrentes add constraint ocurrencias_recurrentes_estado_check
+check (estado in ('programada', 'omitida', 'realizada', 'cancelada'));
+create unique index if not exists ocurrencias_recurrentes_serie_turno_fecha_key
+on public.ocurrencias_recurrentes (serie_id, turno_id, fecha);
+create index if not exists ocurrencias_recurrentes_fecha_idx on public.ocurrencias_recurrentes (fecha, estado);
+
+alter table public.reservas add column if not exists ocurrencia_recurrente_id uuid;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'reservas_ocurrencia_recurrente_id_fkey') then
+    alter table public.reservas add constraint reservas_ocurrencia_recurrente_id_fkey
+    foreign key (ocurrencia_recurrente_id) references public.ocurrencias_recurrentes(id) on delete set null;
+  end if;
+end $$;
+create unique index if not exists reservas_ocurrencia_recurrente_id_key
+on public.reservas (ocurrencia_recurrente_id) where ocurrencia_recurrente_id is not null;
+
+alter table public.serie_recurrente_perros enable row level security;
+alter table public.turnos_recurrentes enable row level security;
+drop policy if exists authenticated_access on public.serie_recurrente_perros;
+create policy authenticated_access on public.serie_recurrente_perros
+for all to authenticated using (true) with check (true);
+drop policy if exists authenticated_access on public.turnos_recurrentes;
+create policy authenticated_access on public.turnos_recurrentes
+for all to authenticated using (true) with check (true);
+
+revoke all on table public.series_recurrentes, public.serie_recurrente_perros, public.turnos_recurrentes, public.ocurrencias_recurrentes from anon;
+grant select, insert, update, delete on table public.series_recurrentes, public.serie_recurrente_perros, public.turnos_recurrentes, public.ocurrencias_recurrentes to authenticated;
+
+create or replace function public.materializar_serie_recurrente(p_serie_id uuid, p_hasta date default null)
+returns integer
+language plpgsql
+set search_path = ''
+as $$
+declare
+  serie public.series_recurrentes%rowtype;
+  turno public.turnos_recurrentes%rowtype;
+  candidate_date date;
+  target_date date;
+  start_date date;
+  occurrence_id uuid;
+  reservation_id uuid;
+  dog_ids uuid[];
+  dog_count integer;
+  service_unit text;
+  applied_rate numeric(10,2);
+  rate_origin text;
+  created_count integer := 0;
+  applies boolean;
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  select * into serie from public.series_recurrentes where id = p_serie_id for update;
+  if not found then raise exception 'La recurrencia no existe.'; end if;
+  if serie.estado <> 'activa' or not serie.activa then return 0; end if;
+
+  select array_agg(perro_id order by created_at), count(*)
+  into dog_ids, dog_count
+  from public.serie_recurrente_perros where serie_id = serie.id;
+  if dog_count = 0 then raise exception 'La recurrencia no tiene perros asociados.'; end if;
+  select tipo_unidad_cobro into service_unit from public.servicios where id = serie.servicio_id and activo;
+  if not found then raise exception 'El servicio no existe o está desactivado.'; end if;
+  if service_unit = 'por_noche' then raise exception 'El alojamiento debe gestionarse como una reserva individual.'; end if;
+
+  target_date := least(
+    coalesce(p_hasta, (greatest(current_date, serie.fecha_inicio) + interval '3 months')::date),
+    coalesce(serie.fecha_fin, '9999-12-31'::date)
+  );
+  start_date := greatest(serie.fecha_inicio, coalesce(serie.materializada_hasta + 1, serie.fecha_inicio));
+  if target_date < start_date then return 0; end if;
+
+  for candidate_date in select generate_series(start_date, target_date, interval '1 day')::date loop
+    applies := extract(isodow from candidate_date)::smallint = any(serie.dias_semana_iso)
+      and (serie.frecuencia <> 'cada_2_semanas' or (floor((candidate_date - serie.fecha_inicio)::numeric / 7)::integer % 2 = 0));
+    if not applies then continue; end if;
+
+    applied_rate := null;
+    select precio_especial into applied_rate
+    from public.tarifas_especiales_cliente
+    where cliente_id = serie.cliente_id and servicio_id = serie.servicio_id and activa
+      and (vigencia_desde is null or vigencia_desde <= candidate_date)
+      and (vigencia_hasta is null or vigencia_hasta >= candidate_date)
+    order by vigencia_desde desc nulls last, created_at desc limit 1;
+    if found then rate_origin := 'especial_cliente'; else
+      select precio_base into applied_rate from public.tarifas_generales
+      where servicio_id = serie.servicio_id and activa
+        and (vigencia_desde is null or vigencia_desde <= candidate_date)
+        and (vigencia_hasta is null or vigencia_hasta >= candidate_date)
+      order by vigencia_desde desc nulls last, created_at desc limit 1;
+      rate_origin := 'general';
+    end if;
+    if applied_rate is null then
+      raise exception 'No existe una tarifa activa para el %.', candidate_date;
+    end if;
+
+    for turno in select * from public.turnos_recurrentes where serie_id = serie.id and activo order by orden, hora_inicio loop
+      occurrence_id := null;
+      insert into public.ocurrencias_recurrentes (
+        serie_id, turno_id, fecha, estado, hora_inicio_estimada, hora_fin_estimada, importe
+      ) values (
+        serie.id, turno.id, candidate_date, 'programada', turno.hora_inicio, turno.hora_fin,
+        round(applied_rate * dog_count, 2)
+      ) on conflict (serie_id, turno_id, fecha) do nothing returning id into occurrence_id;
+      if occurrence_id is null then continue; end if;
+
+      insert into public.reservas (
+        cliente_id, servicio_id, estado, fecha_llegada, hora_estimada_llegada,
+        hora_estimada_salida, observaciones, origen_tarifa, tarifa_aplicada,
+        subtotal, total_final, sugerir_descuento_segundo_perro, ocurrencia_recurrente_id
+      ) values (
+        serie.cliente_id, serie.servicio_id, 'pendiente', candidate_date, turno.hora_inicio,
+        turno.hora_fin,
+        concat_ws(' · ', 'Recurrencia: ' || coalesce(serie.nombre, turno.nombre), nullif(serie.observaciones, '')),
+        rate_origin, applied_rate, round(applied_rate * dog_count, 2), round(applied_rate * dog_count, 2),
+        dog_count > 1, occurrence_id
+      ) returning id into reservation_id;
+
+      insert into public.reserva_perros (reserva_id, perro_id, orden_en_reserva)
+      select reservation_id, dog_id, dog_order::integer
+      from unnest(dog_ids) with ordinality as dogs(dog_id, dog_order);
+      created_count := created_count + 1;
+    end loop;
+  end loop;
+
+  update public.series_recurrentes
+  set materializada_hasta = greatest(coalesce(materializada_hasta, target_date), target_date), updated_at = now()
+  where id = serie.id;
+  return created_count;
+end;
+$$;
+
+create or replace function public.crear_serie_recurrente(
+  p_cliente_id uuid,
+  p_servicio_id uuid,
+  p_perro_ids uuid[],
+  p_nombre text,
+  p_fecha_inicio date,
+  p_fecha_fin date,
+  p_frecuencia text,
+  p_dias_semana integer[],
+  p_turnos jsonb,
+  p_observaciones text default null
+)
+returns jsonb
+language plpgsql
+set search_path = ''
+as $$
+declare
+  new_series_id uuid;
+  valid_dogs integer;
+  turn_item jsonb;
+  turn_order integer := 0;
+  target_date date;
+  created_count integer;
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  if p_fecha_inicio is null then raise exception 'La fecha inicial es obligatoria.'; end if;
+  if p_fecha_fin is not null and p_fecha_fin < p_fecha_inicio then raise exception 'La fecha final no puede ser anterior a la inicial.'; end if;
+  if p_frecuencia not in ('diaria', 'semanal', 'cada_2_semanas') then raise exception 'Frecuencia no permitida.'; end if;
+  if coalesce(cardinality(p_dias_semana), 0) = 0 or not (p_dias_semana <@ array[1,2,3,4,5,6,7]) then raise exception 'Selecciona días de la semana válidos.'; end if;
+  if coalesce(cardinality(p_perro_ids), 0) = 0 then raise exception 'Selecciona al menos un perro.'; end if;
+  if jsonb_typeof(p_turnos) <> 'array' or jsonb_array_length(p_turnos) = 0 then raise exception 'Añade al menos un turno.'; end if;
+  if not exists (select 1 from public.clientes where id = p_cliente_id and activo) then raise exception 'El cliente no existe o está desactivado.'; end if;
+  if not exists (select 1 from public.servicios where id = p_servicio_id and activo and tipo_unidad_cobro <> 'por_noche') then raise exception 'El servicio no admite recurrencias.'; end if;
+  select count(*) into valid_dogs from public.perros where id = any(p_perro_ids) and cliente_id = p_cliente_id and activo;
+  if valid_dogs <> cardinality(p_perro_ids) then raise exception 'Todos los perros deben pertenecer al cliente y estar activos.'; end if;
+
+  insert into public.series_recurrentes (
+    cliente_id, servicio_id, nombre, fecha_inicio, fecha_fin, frecuencia,
+    dias_semana_iso, dias_semana, estado, observaciones, activa
+  ) values (
+    p_cliente_id, p_servicio_id, nullif(trim(p_nombre), ''), p_fecha_inicio, p_fecha_fin, p_frecuencia,
+    p_dias_semana::smallint[], array_to_string(p_dias_semana, ','), 'activa', nullif(trim(p_observaciones), ''), true
+  ) returning id into new_series_id;
+
+  insert into public.serie_recurrente_perros (serie_id, perro_id)
+  select new_series_id, dog_id from unnest(p_perro_ids) dog_id;
+
+  for turn_item in select value from jsonb_array_elements(p_turnos) loop
+    turn_order := turn_order + 1;
+    if nullif(trim(turn_item->>'nombre'), '') is null or nullif(turn_item->>'hora_inicio', '') is null then
+      raise exception 'Cada turno debe tener nombre y hora inicial.';
+    end if;
+    if nullif(turn_item->>'hora_fin', '') is not null and (turn_item->>'hora_fin')::time <= (turn_item->>'hora_inicio')::time then
+      raise exception 'La hora final debe ser posterior a la inicial.';
+    end if;
+    insert into public.turnos_recurrentes (serie_id, nombre, hora_inicio, hora_fin, orden)
+    values (
+      new_series_id, trim(turn_item->>'nombre'), (turn_item->>'hora_inicio')::time,
+      nullif(turn_item->>'hora_fin', '')::time, coalesce((turn_item->>'orden')::integer, turn_order)
+    );
+  end loop;
+
+  target_date := least(coalesce(p_fecha_fin, (p_fecha_inicio + interval '3 months')::date), (p_fecha_inicio + interval '3 months')::date);
+  created_count := public.materializar_serie_recurrente(new_series_id, target_date);
+  return jsonb_build_object('serie_id', new_series_id, 'ocurrencias_creadas', created_count, 'materializada_hasta', target_date);
+end;
+$$;
+
+create or replace function public.materializar_series_activas()
+returns integer
+language plpgsql
+set search_path = ''
+as $$
+declare
+  item record;
+  total_count integer := 0;
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  for item in select id from public.series_recurrentes where estado = 'activa' and activa loop
+    total_count := total_count + public.materializar_serie_recurrente(item.id, (current_date + interval '3 months')::date);
+  end loop;
+  return total_count;
+end;
+$$;
+
+create or replace function public.omitir_ocurrencia_recurrente(p_ocurrencia_id uuid, p_motivo text default null)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare reservation_id uuid;
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  select id into reservation_id from public.reservas
+  where ocurrencia_recurrente_id = p_ocurrencia_id and estado in ('borrador', 'pendiente', 'confirmada');
+  if reservation_id is null then raise exception 'El paseo no se puede omitir porque ya está iniciado, finalizado o no existe.'; end if;
+  if exists (select 1 from public.pagos where reserva_id = reservation_id and estado = 'confirmado') then raise exception 'El paseo tiene pagos registrados. Anúlalos antes de omitirlo.'; end if;
+  update public.ocurrencias_recurrentes set estado = 'omitida', omitida = true,
+    motivo_omision = coalesce(nullif(trim(p_motivo), ''), 'Omitida manualmente'), updated_at = now()
+  where id = p_ocurrencia_id;
+  update public.reservas set estado = 'cancelada', updated_at = now() where id = reservation_id;
+  update public.notificaciones_operativas set estado = 'cancelada', updated_at = now()
+  where reserva_id = reservation_id and estado = 'pendiente';
+end;
+$$;
+
+create or replace function public.restaurar_ocurrencia_recurrente(p_ocurrencia_id uuid)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare reservation_id uuid;
+declare occurrence_date date;
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  select o.fecha, r.id into occurrence_date, reservation_id
+  from public.ocurrencias_recurrentes o
+  join public.series_recurrentes s on s.id = o.serie_id and s.estado = 'activa' and s.activa
+  join public.reservas r on r.ocurrencia_recurrente_id = o.id and r.estado = 'cancelada'
+  where o.id = p_ocurrencia_id and o.omitida;
+  if reservation_id is null then raise exception 'El paseo no se puede restaurar.'; end if;
+  if occurrence_date < current_date then raise exception 'No se puede restaurar un paseo pasado.'; end if;
+  update public.ocurrencias_recurrentes set estado = 'programada', omitida = false, motivo_omision = null, updated_at = now()
+  where id = p_ocurrencia_id;
+  update public.reservas set estado = 'pendiente', updated_at = now() where id = reservation_id;
+  delete from public.notificaciones_operativas where reserva_id = reservation_id and estado = 'cancelada';
+end;
+$$;
+
+create or replace function public.finalizar_serie_recurrente(p_serie_id uuid, p_ultima_fecha date default current_date)
+returns integer
+language plpgsql
+set search_path = ''
+as $$
+declare affected integer := 0;
+begin
+  if (select auth.uid()) is null then raise exception 'Es necesario iniciar sesión.'; end if;
+  update public.series_recurrentes set estado = 'finalizada', activa = false,
+    fecha_fin = least(coalesce(fecha_fin, p_ultima_fecha), p_ultima_fecha), updated_at = now()
+  where id = p_serie_id and estado = 'activa';
+  if not found then raise exception 'La recurrencia no existe o ya está finalizada.'; end if;
+
+  update public.reservas r set estado = 'cancelada', updated_at = now()
+  from public.ocurrencias_recurrentes o
+  where o.serie_id = p_serie_id and o.fecha > p_ultima_fecha and r.ocurrencia_recurrente_id = o.id
+    and r.estado in ('borrador', 'pendiente', 'confirmada')
+    and not exists (select 1 from public.pagos p where p.reserva_id = r.id and p.estado = 'confirmado');
+  get diagnostics affected = row_count;
+  update public.ocurrencias_recurrentes o set estado = 'omitida', omitida = true,
+    motivo_omision = 'Serie finalizada', updated_at = now()
+  where o.serie_id = p_serie_id and o.fecha > p_ultima_fecha
+    and exists (select 1 from public.reservas r where r.ocurrencia_recurrente_id = o.id and r.estado = 'cancelada');
+  update public.notificaciones_operativas n set estado = 'cancelada', updated_at = now()
+  where n.estado = 'pendiente' and exists (
+    select 1 from public.reservas r join public.ocurrencias_recurrentes o on o.id = r.ocurrencia_recurrente_id
+    where r.id = n.reserva_id and o.serie_id = p_serie_id and o.fecha > p_ultima_fecha
+  );
+  return affected;
+end;
+$$;
+
+create or replace function public.marcar_ocurrencia_modificada()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.ocurrencia_recurrente_id is not null and (
+    new.fecha_llegada is distinct from old.fecha_llegada or
+    new.hora_estimada_llegada is distinct from old.hora_estimada_llegada or
+    new.hora_estimada_salida is distinct from old.hora_estimada_salida or
+    new.cliente_id is distinct from old.cliente_id or
+    new.servicio_id is distinct from old.servicio_id
+  ) then
+    update public.ocurrencias_recurrentes set modificada_individualmente = true, updated_at = now()
+    where id = new.ocurrencia_recurrente_id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists reservas_marcar_ocurrencia_modificada on public.reservas;
+create trigger reservas_marcar_ocurrencia_modificada
+after update on public.reservas
+for each row execute function public.marcar_ocurrencia_modificada();
+
+revoke all on function public.materializar_serie_recurrente(uuid, date) from public;
+revoke all on function public.crear_serie_recurrente(uuid, uuid, uuid[], text, date, date, text, integer[], jsonb, text) from public;
+revoke all on function public.materializar_series_activas() from public;
+revoke all on function public.omitir_ocurrencia_recurrente(uuid, text) from public;
+revoke all on function public.restaurar_ocurrencia_recurrente(uuid) from public;
+revoke all on function public.finalizar_serie_recurrente(uuid, date) from public;
+grant execute on function public.materializar_serie_recurrente(uuid, date) to authenticated;
+grant execute on function public.crear_serie_recurrente(uuid, uuid, uuid[], text, date, date, text, integer[], jsonb, text) to authenticated;
+grant execute on function public.materializar_series_activas() to authenticated;
+grant execute on function public.omitir_ocurrencia_recurrente(uuid, text) to authenticated;
+grant execute on function public.restaurar_ocurrencia_recurrente(uuid) to authenticated;
+grant execute on function public.finalizar_serie_recurrente(uuid, date) to authenticated;
+
+create index if not exists turnos_recurrentes_serie_id_idx on public.turnos_recurrentes (serie_id);
+create index if not exists ocurrencias_recurrentes_turno_id_idx on public.ocurrencias_recurrentes (turno_id);
+create index if not exists serie_recurrente_perros_perro_id_idx on public.serie_recurrente_perros (perro_id);
+
+-- Las funciones SECURITY DEFINER existentes solo deben ser ejecutables por sus roles previstos.
+revoke all on function public.programar_notificaciones_operativas(timestamptz) from anon, authenticated, public;
+revoke all on function public.actuar_notificacion(uuid, text) from anon, public;
+revoke all on function public.cancelar_reserva_con_aviso(uuid) from anon, public;
+grant execute on function public.programar_notificaciones_operativas(timestamptz) to service_role;
+grant execute on function public.actuar_notificacion(uuid, text) to authenticated;
+grant execute on function public.cancelar_reserva_con_aviso(uuid) to authenticated;
