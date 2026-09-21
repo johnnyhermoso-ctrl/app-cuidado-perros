@@ -74,5 +74,32 @@ export type Reserva = {
   aplica_recargo_guarderia: boolean | null;
   numero_guarderias_recargo: number | null;
   observaciones: string | null;
+  ocurrencia_recurrente_id?: string | null;
   created_at: string;
+};
+
+export type SerieRecurrente = {
+  id: string;
+  cliente_id: string;
+  servicio_id: string;
+  nombre: string | null;
+  fecha_inicio: string;
+  fecha_fin: string | null;
+  frecuencia: 'diaria' | 'semanal' | 'cada_2_semanas';
+  dias_semana_iso: number[];
+  estado: 'activa' | 'finalizada';
+  observaciones: string | null;
+  materializada_hasta: string | null;
+  activa: boolean;
+  created_at: string;
+};
+
+export type TurnoRecurrente = {
+  id: string;
+  serie_id: string;
+  nombre: string;
+  hora_inicio: string;
+  hora_fin: string | null;
+  orden: number;
+  activo: boolean;
 };

@@ -8,6 +8,7 @@ import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-lab
 import { StatusMessage } from './StatusMessage';
 
 type ReservationJoin = CalendarReservation & {
+  ocurrencia_recurrente_id?: string | null;
   hora_estimada_llegada: string | null;
   hora_estimada_salida: string | null;
   clientes?: { nombre: string; apellidos: string | null } | null;
@@ -48,7 +49,7 @@ export function CalendarManager() {
       const to = days[days.length - 1].date;
       const { data, error: queryError } = await supabase
         .from('reservas')
-        .select('id,fecha_llegada,fecha_salida,hora_estimada_llegada,hora_estimada_salida,estado,clientes(nombre,apellidos),servicios(nombre),reserva_perros(perros(nombre))')
+        .select('id,fecha_llegada,fecha_salida,hora_estimada_llegada,hora_estimada_salida,estado,ocurrencia_recurrente_id,clientes(nombre,apellidos),servicios(nombre),reserva_perros(perros(nombre))')
         .neq('estado', 'cancelada')
         .lte('fecha_llegada', to)
         .or(`fecha_salida.is.null,fecha_salida.gte.${from}`)
@@ -132,7 +133,7 @@ export function CalendarManager() {
                         >
                           <strong>{dogs}</strong>
                           <span>Dueño: {owner}</span>
-                          <span>{joined.servicios?.nombre || 'Servicio'} · {joined.estado}</span>
+                          <span>{joined.ocurrencia_recurrente_id ? '🔁 ' : ''}{joined.servicios?.nombre || 'Servicio'} · {joined.estado}</span>
                         </Link>
                       );
                     })}

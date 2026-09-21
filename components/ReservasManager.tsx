@@ -449,7 +449,7 @@ export function ReservasManager() {
           {reservas.map((reserva) => (
             <article id={`reserva-${reserva.id}`} key={reserva.id} className={`listItem ${highlightedId === reserva.id ? 'highlightedItem' : ''}`}>
               <div>
-                <strong>{reservationDogNames(reserva)} · {reserva.servicios?.nombre || 'Servicio'}</strong>
+                <strong>{reservationDogNames(reserva)} · {reserva.servicios?.nombre || 'Servicio'} {reserva.ocurrencia_recurrente_id ? '🔁' : ''}</strong>
                 <p>
                   {formatDate(reserva.fecha_llegada)} {reserva.hora_estimada_llegada || ''}
                   {reserva.fecha_salida ? ` → ${formatDate(reserva.fecha_salida)} ${reserva.hora_estimada_salida || ''}` : ''}

@@ -11,6 +11,7 @@ const links = [
   { href: '/clientes', label: 'Clientes' },
   { href: '/perros', label: 'Perros' },
   { href: '/reservas', label: 'Reservas' },
+  { href: '/recurrencias', label: 'Recurrencias' },
   { href: '/servicios', label: 'Servicios' },
   { href: '/tarifas', label: 'Tarifas' },
   { href: '/cobros', label: 'Cobros' },
