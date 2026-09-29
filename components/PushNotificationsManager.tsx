@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase/client';
 import { StatusMessage } from './StatusMessage';
 import { formatDate } from '@/lib/utils';
 import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
+import { groupReservations } from '@/lib/reservation-groups';
 
 type PushState = 'checking' | 'unsupported' | 'inactive' | 'active' | 'denied';
 type NotificationItem = {
@@ -31,6 +32,8 @@ type CareReminder = {
 type CareDog = { id: string; nombre: string; medicacion: string | null; alimentacion: string | null };
 type CareReservation = {
   id: string;
+  ocurrencia_recurrente_id?: string | null;
+  ocurrencias_recurrentes?: { serie_id: string } | null;
   fecha_llegada: string | null;
   fecha_salida: string | null;
   clientes?: { nombre: string; apellidos?: string | null } | null;
@@ -80,7 +83,7 @@ export function PushNotificationsManager() {
     const [notificationResult, careResult, reservationResult, configResult] = await Promise.all([
       supabase.from('notificaciones_operativas').select('id,reserva_id,tipo,titulo,cuerpo,scheduled_for,estado').order('scheduled_for', { ascending: false }).limit(30),
       supabase.from('recordatorios_cuidado').select('*,perros(nombre),reservas(clientes(nombre,apellidos))').order('hora'),
-      supabase.from('reservas').select('id,fecha_llegada,fecha_salida,clientes(nombre,apellidos),reserva_perros(perros(id,nombre,medicacion,alimentacion))').in('estado', ['confirmada', 'en_curso']).order('fecha_llegada'),
+      supabase.from('reservas').select('id,fecha_llegada,fecha_salida,ocurrencia_recurrente_id,ocurrencias_recurrentes(serie_id),clientes(nombre,apellidos),reserva_perros(perros(id,nombre,medicacion,alimentacion))').in('estado', ['confirmada', 'en_curso']).order('fecha_llegada'),
       supabase.from('configuracion').select('clave,valor').in('clave', Object.values(configKeys)),
     ]);
     const firstError = notificationResult.error || careResult.error || reservationResult.error || configResult.error;
@@ -207,6 +210,8 @@ export function PushNotificationsManager() {
   }
 
   const selectedReservation = useMemo(() => reservations.find((item) => item.id === careForm.reserva_id), [reservations, careForm.reserva_id]);
+  const reservationGroups = useMemo(() => groupReservations(reservations), [reservations]);
+  const selectedGroup = reservationGroups.find((group) => group.reservations.some((item) => item.id === careForm.reserva_id));
   const availableDogs = useMemo(() => selectedReservation?.reserva_perros?.map((item) => item.perros).filter(Boolean) as CareDog[] ?? [], [selectedReservation]);
 
   function selectCareDog(dogId: string, type = careForm.tipo) {
@@ -275,7 +280,8 @@ export function PushNotificationsManager() {
           <h2>Cuidados durante una reserva</h2>
           <p className="muted">El texto se propone desde la ficha del perro, pero el horario se configura para cada estancia.</p>
           <form className="formGrid oneColumn" onSubmit={saveCareReminder}>
-            <label>Reserva<select value={careForm.reserva_id} onChange={(event) => setCareForm({ ...careForm, reserva_id: event.target.value, perro_id: '', descripcion: '' })}><option value="">Selecciona una reserva</option>{reservations.map((item) => <option key={item.id} value={item.id}>{reservationDogNames(item)} · Dueño: {reservationOwnerName(item)} · {formatDate(item.fecha_llegada)}–{formatDate(item.fecha_salida)}</option>)}</select></label>
+            <label>Reserva o plan recurrente<select value={selectedGroup?.key ?? ''} onChange={(event) => { const group = reservationGroups.find((item) => item.key === event.target.value); setCareForm({ ...careForm, reserva_id: group?.reservations[0]?.id ?? '', perro_id: '', descripcion: '' }); }}><option value="">Selecciona una reserva</option>{reservationGroups.map((group) => { const item = group.reservations[0]; return <option key={group.key} value={group.key}>{group.seriesId ? '🔁 ' : ''}{reservationDogNames(item)} · Dueño: {reservationOwnerName(item)} · {group.seriesId ? `${group.reservations.length} paseos` : `${formatDate(item.fecha_llegada)}–${formatDate(item.fecha_salida)}`}</option>; })}</select></label>
+            {selectedGroup?.seriesId ? <label>Paseo concreto<select value={careForm.reserva_id} onChange={(event) => setCareForm({ ...careForm, reserva_id: event.target.value, perro_id: '', descripcion: '' })}>{selectedGroup.reservations.map((item) => <option key={item.id} value={item.id}>{formatDate(item.fecha_llegada)} · {reservationDogNames(item)}</option>)}</select></label> : null}
             <label>Perro<select value={careForm.perro_id} onChange={(event) => selectCareDog(event.target.value)}><option value="">Selecciona un perro</option>{availableDogs.map((dog) => <option key={dog.id} value={dog.id}>{dog.nombre}</option>)}</select></label>
             <label>Tipo<select value={careForm.tipo} onChange={(event) => selectCareDog(careForm.perro_id, event.target.value as 'medicacion' | 'alimentacion')}><option value="medicacion">Medicación</option><option value="alimentacion">Alimentación</option></select></label>
             <label>Hora<input type="time" value={careForm.hora} onChange={(event) => setCareForm({ ...careForm, hora: event.target.value })} /></label>

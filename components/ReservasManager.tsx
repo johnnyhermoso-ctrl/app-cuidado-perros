@@ -10,8 +10,10 @@ import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-lab
 import { StatusMessage } from './StatusMessage';
 import { holidaySurcharge, type Holiday } from '@/lib/holidays';
 import { capacityExceededDates } from '@/lib/capacity';
+import { groupReservations } from '@/lib/reservation-groups';
 
 type ReservaJoin = Reserva & {
+  ocurrencias_recurrentes?: { serie_id: string } | null;
   clientes?: Cliente;
   servicios?: Servicio;
   reserva_perros?: Array<{ perro_id: string; perros?: Perro }>;
@@ -83,7 +85,7 @@ export function ReservasManager() {
     setLoading(true);
     const { data, error } = await supabase
       .from('reservas')
-      .select('*, clientes(*), servicios(*), reserva_perros(perro_id, perros(*)), ajustes_reserva(tipo,concepto,importe,cantidad,descripcion,estado,modo)')
+      .select('*, clientes(*), servicios(*), reserva_perros(perro_id, perros(*)), ajustes_reserva(tipo,concepto,importe,cantidad,descripcion,estado,modo), ocurrencias_recurrentes(serie_id)')
       .order('created_at', { ascending: false });
     if (error) {
       setMessage({ type: 'error', text: error.message });
@@ -136,7 +138,12 @@ export function ReservasManager() {
       setHighlightedId(reservation.id);
       if (['borrador', 'pendiente', 'confirmada', 'en_curso'].includes(reservation.estado)) editReservation(reservation);
       else setMessage({ type: 'success', text: `Reserva ${reservation.estado.replace('_', ' ')} seleccionada en el listado.` });
-      window.setTimeout(() => document.getElementById(`reserva-${reservation.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+      window.setTimeout(() => {
+        const row = document.getElementById(`reserva-${reservation.id}`);
+        const group = row?.closest('details');
+        if (group) group.open = true;
+        row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
       deepLinkHandled.current = true;
     } else if (clientId && clientes.some((client) => client.id === clientId)) {
       setForm((current) => ({ ...current, cliente_id: clientId }));
@@ -446,7 +453,8 @@ export function ReservasManager() {
         {loading ? <p>Cargando reservas...</p> : null}
         {!loading && reservas.length === 0 ? <p>No hay reservas todavía.</p> : null}
         <div className="listStack">
-          {reservas.map((reserva) => (
+          {groupReservations(reservas).map((group) => {
+            const cards = group.reservations.map((reserva) => (
             <article id={`reserva-${reserva.id}`} key={reserva.id} className={`listItem ${highlightedId === reserva.id ? 'highlightedItem' : ''}`}>
               <div>
                 <strong>{reservationDogNames(reserva)} · {reserva.servicios?.nombre || 'Servicio'} {reserva.ocurrencia_recurrente_id ? '🔁' : ''}</strong>
@@ -492,7 +500,15 @@ export function ReservasManager() {
                 </div>
               </div>
             </article>
-          ))}
+            ));
+            if (!group.seriesId) return cards[0];
+            const first = group.reservations[0];
+            const selected = group.reservations.some((item) => item.id === highlightedId);
+            return <details className="reservationSeriesGroup" key={group.key} ref={(element) => { if (element && (selected || searchParams.get('serie') === group.seriesId)) element.open = true; }}>
+              <summary><strong>🔁 {reservationDogNames(first)} · {first.servicios?.nombre || 'Servicio'}</strong><span>{group.reservations.length} paseos · Dueño: {reservationOwnerName(first)}</span></summary>
+              <div className="listStack reservationSeriesItems">{cards}</div>
+            </details>;
+          })}
         </div>
       </section>
     </div>

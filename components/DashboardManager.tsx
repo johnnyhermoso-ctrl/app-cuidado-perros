@@ -6,9 +6,12 @@ import { supabase } from '@/lib/supabase/client';
 import { buildMonthlyForecast, buildOperationalMetrics, reservationBalance, type DashboardReservation } from '@/lib/dashboard';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
+import { groupReservations } from '@/lib/reservation-groups';
 import { StatusMessage } from './StatusMessage';
 
 type Booking = Omit<DashboardReservation, 'reserva_perros'> & {
+  ocurrencia_recurrente_id?: string | null;
+  ocurrencias_recurrentes?: { serie_id: string } | null;
   hora_estimada_llegada: string | null;
   clientes?: { nombre: string; apellidos?: string | null } | null;
   servicios?: { nombre: string } | null;
@@ -47,7 +50,7 @@ export function DashboardManager() {
       const [clientes, perros, reservas, pagos] = await Promise.all([
         supabase.from('clientes').select('*', { count: 'exact', head: true }).eq('activo', true),
         supabase.from('perros').select('*', { count: 'exact', head: true }).eq('activo', true),
-        supabase.from('reservas').select('id,estado,fecha_llegada,hora_estimada_llegada,fecha_salida,total_final,clientes(nombre,apellidos),servicios(nombre),reserva_perros(perro_id,perros(nombre)),pagos(importe,estado)').neq('estado', 'cancelada').order('fecha_llegada').order('hora_estimada_llegada'),
+        supabase.from('reservas').select('id,estado,fecha_llegada,hora_estimada_llegada,fecha_salida,total_final,ocurrencia_recurrente_id,ocurrencias_recurrentes(serie_id),clientes(nombre,apellidos),servicios(nombre),reserva_perros(perro_id,perros(nombre)),pagos(importe,estado)').neq('estado', 'cancelada').order('fecha_llegada').order('hora_estimada_llegada'),
         supabase.from('pagos').select('importe').eq('estado', 'confirmado').gte('fecha_pago', start).lt('fecha_pago', next),
       ]);
       const firstError = clientes.error || perros.error || reservas.error || pagos.error;
@@ -63,8 +66,8 @@ export function DashboardManager() {
   }, [today]);
 
   const metrics = useMemo(() => buildOperationalMetrics(bookings, today), [bookings, today]);
-  const upcoming = useMemo(() => bookings.filter((booking) => booking.fecha_llegada && booking.fecha_llegada >= today && ['pendiente', 'confirmada'].includes(booking.estado)).slice(0, 6), [bookings, today]);
-  const pendingPayments = useMemo(() => bookings.filter((booking) => reservationBalance(booking) > 0).sort((a, b) => reservationBalance(b) - reservationBalance(a)).slice(0, 5), [bookings]);
+  const upcoming = useMemo(() => groupReservations(bookings.filter((booking) => booking.fecha_llegada && booking.fecha_llegada >= today && ['pendiente', 'confirmada'].includes(booking.estado))).slice(0, 6), [bookings, today]);
+  const pendingPayments = useMemo(() => groupReservations(bookings.filter((booking) => reservationBalance(booking) > 0)).sort((a, b) => b.reservations.reduce((sum, item) => sum + reservationBalance(item), 0) - a.reservations.reduce((sum, item) => sum + reservationBalance(item), 0)).slice(0, 5), [bookings]);
   const monthlyForecast = useMemo(() => buildMonthlyForecast(bookings, forecastStart), [bookings, forecastStart]);
 
   function updateForecastStart(value: string) {
@@ -122,12 +125,12 @@ export function DashboardManager() {
         <section className="card">
           <div className="cardHeaderInline"><h2>Próximas reservas</h2><Link className="textButton" href="/calendario/">Calendario</Link></div>
           {upcoming.length === 0 ? <p className="muted">No hay próximas reservas registradas.</p> : null}
-          <div className="listStack">{upcoming.map((booking) => <article className="listItem" key={booking.id}><div><strong>{reservationDogNames(booking)}</strong><p>{formatDate(booking.fecha_llegada)} {booking.hora_estimada_llegada?.slice(0, 5) ?? ''} · {booking.servicios?.nombre ?? 'Servicio'}</p><small>Dueño: {reservationOwnerName(booking)}</small></div><span className={`pill state-${booking.estado}`}>{booking.estado.replace('_', ' ')}</span></article>)}</div>
+          <div className="listStack">{upcoming.map((group) => { const booking = group.reservations[0]; return <article className="listItem" key={group.key}><div><strong>{group.seriesId ? '🔁 ' : ''}{reservationDogNames(booking)}</strong><p>{formatDate(booking.fecha_llegada)} {booking.hora_estimada_llegada?.slice(0, 5) ?? ''} · {booking.servicios?.nombre ?? 'Servicio'}</p><small>Dueño: {reservationOwnerName(booking)}{group.seriesId ? ` · ${group.reservations.length} paseos próximos` : ''}</small></div>{group.seriesId ? <Link className="textButton" href={`/reservas/?serie=${group.seriesId}`}>Ver paseos</Link> : <span className={`pill state-${booking.estado}`}>{booking.estado.replace('_', ' ')}</span>}</article>; })}</div>
         </section>
         <section className="card">
           <div className="cardHeaderInline"><h2>Cobros pendientes</h2><Link className="textButton" href="/cobros/">Gestionar</Link></div>
           {pendingPayments.length === 0 ? <p className="muted">No hay saldos pendientes.</p> : null}
-          <div className="listStack">{pendingPayments.map((booking) => <article className="listItem" key={booking.id}><div><strong>{reservationDogNames(booking)}</strong><p>Dueño: {reservationOwnerName(booking)} · {booking.servicios?.nombre ?? 'Servicio'}</p><small>{formatDate(booking.fecha_llegada)} · Total {formatCurrency(Number(booking.total_final ?? 0))}</small></div><strong className="balanceDue">{formatCurrency(reservationBalance(booking))}</strong></article>)}</div>
+          <div className="listStack">{pendingPayments.map((group) => { const booking = group.reservations[0]; return <article className="listItem" key={group.key}><div><strong>{group.seriesId ? '🔁 ' : ''}{reservationDogNames(booking)}</strong><p>Dueño: {reservationOwnerName(booking)} · {booking.servicios?.nombre ?? 'Servicio'}</p><small>{group.seriesId ? `${group.reservations.length} paseos con saldo pendiente` : `${formatDate(booking.fecha_llegada)} · Total ${formatCurrency(Number(booking.total_final ?? 0))}`}</small></div><strong className="balanceDue">{formatCurrency(group.reservations.reduce((sum, item) => sum + reservationBalance(item), 0))}</strong></article>; })}</div>
         </section>
       </div>
     </>
