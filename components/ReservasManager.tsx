@@ -10,7 +10,7 @@ import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-lab
 import { StatusMessage } from './StatusMessage';
 import { holidaySurcharge, type Holiday } from '@/lib/holidays';
 import { capacityExceededDates } from '@/lib/capacity';
-import { groupReservations } from '@/lib/reservation-groups';
+import { compareReservationsNewestFirst, groupReservations } from '@/lib/reservation-groups';
 
 type ReservaJoin = Reserva & {
   ocurrencias_recurrentes?: { serie_id: string } | null;
@@ -356,6 +356,10 @@ export function ReservasManager() {
     setUpdatingId(null);
   }
 
+  const displayGroups = groupReservations(reservas)
+    .map((group) => ({ ...group, reservations: [...group.reservations].sort(compareReservationsNewestFirst) }))
+    .sort((a, b) => compareReservationsNewestFirst(a.reservations[0], b.reservations[0]));
+
   return (
     <div className="grid twoCols">
       <section className="card">
@@ -453,7 +457,7 @@ export function ReservasManager() {
         {loading ? <p>Cargando reservas...</p> : null}
         {!loading && reservas.length === 0 ? <p>No hay reservas todavía.</p> : null}
         <div className="listStack">
-          {groupReservations(reservas).map((group) => {
+          {displayGroups.map((group) => {
             const cards = group.reservations.map((reserva) => (
             <article id={`reserva-${reserva.id}`} key={reserva.id} className={`listItem ${highlightedId === reserva.id ? 'highlightedItem' : ''}`}>
               <div>
