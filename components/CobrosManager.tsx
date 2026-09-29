@@ -4,12 +4,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { calculateBalance, formatCurrency, formatDate } from '@/lib/utils';
 import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
+import { groupReservations } from '@/lib/reservation-groups';
 import { StatusMessage } from './StatusMessage';
 
 type Adjustment = { id: string; tipo: 'descuento' | 'recargo'; concepto: string; importe: number; descripcion: string | null; estado: 'activo' | 'anulado'; created_at: string };
 type Payment = { id: string; fecha_pago: string; importe: number; metodo_pago: string | null; estado: 'confirmado' | 'anulado'; referencia: string | null; observaciones: string | null; created_at: string };
 type EconomicBooking = {
   id: string; fecha_llegada: string | null; estado: string; subtotal: number; total_descuentos: number; total_recargos: number; total_final: number;
+  ocurrencia_recurrente_id?: string | null; ocurrencias_recurrentes?: { serie_id: string } | null;
   clientes?: { nombre: string; apellidos?: string | null } | null; servicios?: { nombre: string } | null;
   reserva_perros?: Array<{ perros?: { nombre: string } | null }> | null; ajustes_reserva?: Adjustment[]; pagos?: Payment[];
 };
@@ -31,7 +33,7 @@ export function CobrosManager() {
     setLoading(true);
     const { data, error } = await supabase
       .from('reservas')
-      .select('id,fecha_llegada,estado,subtotal,total_descuentos,total_recargos,total_final,clientes(nombre,apellidos),servicios(nombre),reserva_perros(perros(nombre)),ajustes_reserva(*),pagos(*)')
+      .select('id,fecha_llegada,estado,subtotal,total_descuentos,total_recargos,total_final,ocurrencia_recurrente_id,ocurrencias_recurrentes(serie_id),clientes(nombre,apellidos),servicios(nombre),reserva_perros(perros(nombre)),ajustes_reserva(*),pagos(*)')
       .neq('estado', 'cancelada')
       .order('fecha_llegada', { ascending: false });
     if (error) setMessage({ type: 'error', text: error.message });
@@ -48,6 +50,8 @@ export function CobrosManager() {
 
   useEffect(() => { loadBookings(); }, [loadBookings]);
   const selected = useMemo(() => bookings.find((item) => item.id === selectedId), [bookings, selectedId]);
+  const bookingGroups = useMemo(() => groupReservations(bookings), [bookings]);
+  const selectedGroup = bookingGroups.find((group) => group.reservations.some((item) => item.id === selectedId));
   const paid = useMemo(() => selected?.pagos?.filter((item) => item.estado === 'confirmado').reduce((sum, item) => sum + Number(item.importe), 0) ?? 0, [selected]);
   const balance = calculateBalance(Number(selected?.total_final ?? 0), [paid]);
 
@@ -116,11 +120,12 @@ export function CobrosManager() {
   return (
     <>
       <section className="card">
-        <label>Reserva
-          <select value={selectedId} onChange={(e) => { setSelectedId(e.target.value); setMessage(null); }}>
-            {bookings.map((item) => <option key={item.id} value={item.id}>{reservationDogNames(item)} · Dueño: {reservationOwnerName(item)} · {formatDate(item.fecha_llegada)} · {item.servicios?.nombre}</option>)}
+        <label>Reserva o plan recurrente
+          <select value={selectedGroup?.key ?? ''} onChange={(e) => { const group = bookingGroups.find((item) => item.key === e.target.value); setSelectedId(group?.reservations[0]?.id ?? ''); setMessage(null); }}>
+            {bookingGroups.map((group) => { const item = group.reservations[0]; return <option key={group.key} value={group.key}>{group.seriesId ? '🔁 ' : ''}{reservationDogNames(item)} · Dueño: {reservationOwnerName(item)} · {group.seriesId ? `${group.reservations.length} paseos` : formatDate(item.fecha_llegada)} · {item.servicios?.nombre}</option>; })}
           </select>
         </label>
+        {selectedGroup?.seriesId ? <label>Paseo concreto<select value={selectedId} onChange={(e) => { setSelectedId(e.target.value); setMessage(null); }}>{selectedGroup.reservations.map((item) => <option key={item.id} value={item.id}>{formatDate(item.fecha_llegada)} · {item.estado} · {formatCurrency(item.total_final)}</option>)}</select></label> : null}
       </section>
       {selected ? <>
         <div className="grid stats sectionSpacing">

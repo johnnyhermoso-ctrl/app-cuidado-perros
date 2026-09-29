@@ -5,15 +5,17 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { buildReservationHueMap, CalendarReservation, getDaySummary, getMonthGrid } from '@/lib/calendar';
 import { reservationDogNames, reservationOwnerName } from '@/lib/reservation-labels';
+import { groupReservations } from '@/lib/reservation-groups';
 import { StatusMessage } from './StatusMessage';
 
 type ReservationJoin = CalendarReservation & {
   ocurrencia_recurrente_id?: string | null;
+  ocurrencias_recurrentes?: { serie_id: string } | null;
   hora_estimada_llegada: string | null;
   hora_estimada_salida: string | null;
   clientes?: { nombre: string; apellidos: string | null } | null;
   servicios?: { nombre: string } | null;
-  reserva_perros?: Array<{ perros?: { nombre: string } | null }>;
+  reserva_perros?: Array<{ perros?: { id: string; nombre: string } | null }>;
 };
 
 const weekDays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
@@ -49,7 +51,7 @@ export function CalendarManager() {
       const to = days[days.length - 1].date;
       const { data, error: queryError } = await supabase
         .from('reservas')
-        .select('id,fecha_llegada,fecha_salida,hora_estimada_llegada,hora_estimada_salida,estado,ocurrencia_recurrente_id,clientes(nombre,apellidos),servicios(nombre),reserva_perros(perros(nombre))')
+        .select('id,fecha_llegada,fecha_salida,hora_estimada_llegada,hora_estimada_salida,estado,ocurrencia_recurrente_id,ocurrencias_recurrentes(serie_id),clientes(nombre,apellidos),servicios(nombre),reserva_perros(perros(id,nombre))')
         .neq('estado', 'cancelada')
         .lte('fecha_llegada', to)
         .or(`fecha_salida.is.null,fecha_salida.gte.${from}`)
@@ -98,13 +100,15 @@ export function CalendarManager() {
           <div className="calendarGrid calendarDays">
             {days.map((day) => {
               const summary = getDaySummary(reservations, day.date);
-              const dogCount = (items: CalendarReservation[]) => items.reduce(
-                (total, reservation) => total + ((reservation as ReservationJoin).reserva_perros?.length ?? 0),
-                0
-              );
+              const dogCount = (items: CalendarReservation[]) => new Set(items.flatMap((reservation) =>
+                ((reservation as ReservationJoin).reserva_perros ?? []).map((link) => link.perros?.id).filter(Boolean)
+              )).size;
               const occupiedDogs = dogCount(summary.reservations);
               const arrivingDogs = dogCount(summary.reservations.filter((reservation) => reservation.fecha_llegada === day.date));
               const departingDogs = dogCount(summary.reservations.filter((reservation) => reservation.fecha_salida === day.date));
+              const groups = groupReservations(summary.reservations as ReservationJoin[]);
+              const singleBookings = groups.filter((group) => !group.seriesId);
+              const recurringBookings = groups.filter((group) => group.seriesId);
               return (
                 <article key={day.date} className={`calendarDay ${day.inCurrentMonth ? '' : 'calendarDayOutside'}`}>
                   <div className="calendarDayHeader">
@@ -118,8 +122,9 @@ export function CalendarManager() {
                     </div>
                   ) : null}
                   <div className="calendarBookings">
-                    {summary.reservations.slice(0, 3).map((reservation) => {
-                      const joined = reservation as ReservationJoin;
+                    {singleBookings.slice(0, 3).map((group) => {
+                      const joined = group.reservations[0];
+                      const reservation = joined;
                       const dogs = reservationDogNames(joined);
                       const owner = reservationOwnerName(joined);
                       const hue = reservationHues.get(reservation.id) ?? 220;
@@ -133,11 +138,19 @@ export function CalendarManager() {
                         >
                           <strong>{dogs}</strong>
                           <span>Dueño: {owner}</span>
-                          <span>{joined.ocurrencia_recurrente_id ? '🔁 ' : ''}{joined.servicios?.nombre || 'Servicio'} · {joined.estado}</span>
+                          <span>{joined.servicios?.nombre || 'Servicio'} · {joined.estado}</span>
                         </Link>
                       );
                     })}
-                    {summary.reservations.length > 3 ? <small>+{summary.reservations.length - 3} más</small> : null}
+                    {recurringBookings.map((group) => {
+                      const first = group.reservations[0];
+                      const dogs = reservationDogNames(first);
+                      const times = group.reservations.map((item) => item.hora_estimada_llegada?.slice(0, 5)).filter(Boolean).join(', ');
+                      return <Link key={group.key} className="calendarBooking calendarSeriesBooking" href={`/reservas/?serie=${group.seriesId}`} title={`${dogs} · ${group.reservations.length} paseos · ${times}`}>
+                        <strong>🔁 {dogs} ×{group.reservations.length}</strong><span>{times || first.servicios?.nombre || 'Paseos'}</span>
+                      </Link>;
+                    })}
+                    {singleBookings.length > 3 ? <small>+{singleBookings.length - 3} reservas más</small> : null}
                   </div>
                 </article>
               );
